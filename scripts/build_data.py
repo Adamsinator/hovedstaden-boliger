@@ -20,25 +20,28 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from stations import STATIONS, LINES, LINE_LABELS  # noqa: E402
 
 API = "https://api.boligsiden.dk/search/cases"
+DAWA = "https://api.dataforsyningen.dk"
 PER_PAGE = 500
 
 # S-train corridor: København → Hillerød + the northern coast, near the S-train.
+# slug -> (display name, official municipality code, for DAWA boundaries)
 MUNICIPALITIES = {
-    "koebenhavn":      "København",
-    "frederiksberg":   "Frederiksberg",
-    "gentofte":        "Gentofte",
-    "lyngby-taarbaek": "Lyngby-Taarbæk",
-    "rudersdal":       "Rudersdal",
-    "gladsaxe":        "Gladsaxe",
-    "furesoe":         "Furesø",
-    "alleroed":        "Allerød",
-    "hilleroed":       "Hillerød",
-    "hoersholm":       "Hørsholm",
-    "ballerup":        "Ballerup",
-    "herlev":          "Herlev",
-    "egedal":          "Egedal",
-    "fredensborg":     "Fredensborg",
+    "koebenhavn":      ("København", 101),
+    "frederiksberg":   ("Frederiksberg", 147),
+    "gentofte":        ("Gentofte", 157),
+    "lyngby-taarbaek": ("Lyngby-Taarbæk", 173),
+    "rudersdal":       ("Rudersdal", 230),
+    "gladsaxe":        ("Gladsaxe", 159),
+    "furesoe":         ("Furesø", 190),
+    "alleroed":        ("Allerød", 201),
+    "hilleroed":       ("Hillerød", 219),
+    "hoersholm":       ("Hørsholm", 223),
+    "ballerup":        ("Ballerup", 151),
+    "herlev":          ("Herlev", 163),
+    "egedal":          ("Egedal", 240),
+    "fredensborg":     ("Fredensborg", 210),
 }
+MUNI_NAME = {s: v[0] for s, v in MUNICIPALITIES.items()}
 TYPES = ["condo", "villa"]  # ejerlejlighed, villa
 
 # "Near the S-train" heuristic (metres, straight-line to nearest S-train station).
@@ -123,6 +126,21 @@ def address_line(addr):
     return " ".join(p for p in parts if p).strip(", ").strip()
 
 
+def floor_num(raw):
+    """Map a Danish floor label to a sortable number (kl=-1, st=0, 1..n)."""
+    if raw is None:
+        return None
+    s = str(raw).strip().lower()
+    if s in ("kl", "kld", "kælder", "k"):
+        return -1
+    if s in ("st", "stuen", "s"):
+        return 0
+    try:
+        return int(s)
+    except ValueError:
+        return None
+
+
 def trim(case):
     addr = case.get("address") or {}
     coords = case.get("coordinates") or {}
@@ -148,6 +166,9 @@ def trim(case):
         "chg": case.get("priceChangePercentage"),
         "y": case.get("yearBuilt"),
         "e": case.get("energyLabel"),
+        "fl": addr.get("floor"),                       # etage label (condos)
+        "fln": floor_num(addr.get("floor")),           # numeric floor for filtering
+        "bsm": case.get("basementArea") or 0,          # kælder m²
         "lat": round(lat, 6),
         "lon": round(lon, 6),
         "muni": (addr.get("municipality") or {}).get("slug"),
@@ -169,10 +190,220 @@ def trim(case):
     }
 
 
+# ---------------------------------------------------------------------------
+# Municipality boundaries (Dataforsyningen / DAWA) — real land + coastline
+# ---------------------------------------------------------------------------
+def _rdp(points, eps):
+    """Ramer–Douglas–Peucker line simplification (iterative)."""
+    if len(points) < 3:
+        return points
+    keep = [False] * len(points)
+    keep[0] = keep[-1] = True
+    stack = [(0, len(points) - 1)]
+    while stack:
+        a, b = stack.pop()
+        ax, ay = points[a]
+        bx, by = points[b]
+        dx, dy = bx - ax, by - ay
+        norm = math.hypot(dx, dy) or 1e-12
+        dmax, idx = 0.0, -1
+        for i in range(a + 1, b):
+            px, py = points[i]
+            d = abs((px - ax) * dy - (py - ay) * dx) / norm
+            if d > dmax:
+                dmax, idx = d, i
+        if dmax > eps and idx != -1:
+            keep[idx] = True
+            stack.append((a, idx))
+            stack.append((idx, b))
+    return [p for p, k in zip(points, keep) if k]
+
+
+def _rdp_ring(points, eps):
+    """RDP for a closed ring: split at the vertex farthest from the start so the
+    baseline isn't degenerate, simplify both halves, then rejoin."""
+    if len(points) < 4:
+        return points
+    x0, y0 = points[0]
+    far = max(range(1, len(points)), key=lambda i: (points[i][0] - x0) ** 2 + (points[i][1] - y0) ** 2)
+    a = _rdp(points[:far + 1], eps)
+    b = _rdp(points[far:], eps)
+    return a[:-1] + b            # drop shared vertex at the join
+
+
+def fetch_boundaries():
+    """Return {slug: {name, bbox, rings}} from DAWA, simplified for the web."""
+    EPS = 0.00065          # ~45 m
+    MIN_RING_PTS = 6
+    MIN_RING_SPAN = 0.004  # drop islets smaller than ~300 m across
+    geo = {}
+    for slug, (name, code) in MUNICIPALITIES.items():
+        url = f"{DAWA}/kommuner/{code}?format=geojson&srid=4326"
+        try:
+            with urllib.request.urlopen(url, timeout=60) as r:
+                feat = json.load(r)
+        except Exception as e:
+            print(f"    boundary {name} failed: {e}", file=sys.stderr)
+            continue
+        g = feat.get("geometry") or {}
+        polys = g.get("coordinates") or []
+        if g.get("type") == "Polygon":
+            polys = [polys]
+        rings, mnx, mny, mxx, mxy = [], 1e9, 1e9, -1e9, -1e9
+        for poly in polys:
+            outer = poly[0] if poly else []          # outer ring only
+            pts = [[round(x, 5), round(y, 5)] for x, y in outer]
+            xs = [p[0] for p in pts]
+            ys = [p[1] for p in pts]
+            if not xs:
+                continue
+            span = max(max(xs) - min(xs), max(ys) - min(ys))
+            simp = _rdp_ring(pts, EPS)
+            if len(simp) < MIN_RING_PTS or span < MIN_RING_SPAN:
+                continue
+            rings.append(simp)
+            mnx, mny = min(mnx, min(xs)), min(mny, min(ys))
+            mxx, mxy = max(mxx, max(xs)), max(mxy, max(ys))
+        if rings:
+            geo[slug] = {"name": name, "bbox": [round(mnx, 5), round(mny, 5),
+                         round(mxx, 5), round(mxy, 5)], "rings": rings}
+            print(f"    boundary {name:16} rings={len(rings)} "
+                  f"pts={sum(len(r) for r in rings)}")
+    return geo
+
+
+# ---------------------------------------------------------------------------
+# Real long-run price history — Danmarks Statistik table EJ56 (quarterly index,
+# 1992→present) for the landsdele covering this corridor, house vs condo.
+# ---------------------------------------------------------------------------
+DST_AREAS = {           # DST OMRÅDE id -> display name (corridor landsdele + context)
+    "01":  "Byen København",
+    "02":  "Københavns omegn",
+    "03":  "Nordsjælland",
+    "084": "Region Hovedstaden",
+    "000": "Hele landet",
+}
+DST_CATS = {"0111": "villa", "2103": "condo"}   # Enfamiliehuse, Ejerlejligheder
+
+
+def fetch_dst_index():
+    """Pull EJ56 (price index, quarterly) and return a compact chart structure."""
+    qs = urllib.parse.urlencode({
+        "OMRÅDE": ",".join(DST_AREAS),
+        "EJENDOMSKATE": ",".join(DST_CATS),
+        "TAL": "100",            # Indeks
+        "Tid": "*",
+    })
+    url = f"https://api.statbank.dk/v1/data/EJ56/JSONSTAT?{qs}"
+    try:
+        with urllib.request.urlopen(url, timeout=60) as r:
+            d = json.load(r)
+    except Exception as e:
+        print(f"    DST EJ56 failed: {e}", file=sys.stderr)
+        return None
+    ds = d.get("dataset", d)
+    dim = ds["dimension"]
+    order = dim["id"]           # ['OMRÅDE','EJENDOMSKATE','TAL','ContentsCode','Tid']
+    sizes = dim["size"]
+    # index maps for each dimension
+    def cat_index(name):
+        idx = dim[name]["category"]["index"]
+        return sorted(idx, key=lambda k: idx[k])
+    areas = cat_index("OMRÅDE")
+    cats = cat_index("EJENDOMSKATE")
+    quarters = cat_index("Tid")
+    values = ds["value"]
+    # strides for row-major flattening in `order`
+    stride = [1] * len(sizes)
+    for i in range(len(sizes) - 2, -1, -1):
+        stride[i] = stride[i + 1] * sizes[i + 1]
+    pos = {name: order.index(name) for name in ("OMRÅDE", "EJENDOMSKATE", "Tid")}
+    series = {}
+    for ai, a in enumerate(areas):
+        for ci, c in enumerate(cats):
+            key = f"{a}|{DST_CATS[c]}"
+            row = []
+            for ti in range(len(quarters)):
+                flat = ai * stride[pos["OMRÅDE"]] + ci * stride[pos["EJENDOMSKATE"]] + ti * stride[pos["Tid"]]
+                v = values[flat] if flat < len(values) else None
+                row.append(v)
+            series[key] = row
+    print(f"    DST EJ56: {len(quarters)} quarters {quarters[0]}–{quarters[-1]}, "
+          f"{len(series)} series")
+    return {
+        "source": "Danmarks Statistik · EJ56",
+        "unit": "Prisindeks (2021 = 100)",
+        "quarters": quarters,
+        "areas": [{"id": a, "name": DST_AREAS[a]} for a in areas],
+        "series": series,   # keyed "<areaId>|condo" / "<areaId>|villa"
+    }
+
+
+# ---------------------------------------------------------------------------
+# History accumulation — a dated snapshot per (scope, type) appended each run
+# ---------------------------------------------------------------------------
+def snapshot(listings, date_str):
+    def agg(rows):
+        prices = [r["p"] for r in rows if r.get("p")]
+        m2 = [r["m2p"] for r in rows if r.get("m2p")]
+        days = [r["d"] for r in rows if r.get("d") is not None]
+        cuts = sum(1 for r in rows if (r.get("chg") or 0) < 0)
+        if not rows:
+            return None
+        return {
+            "n": len(rows),
+            "medPrice": round(median(prices)) if prices else None,
+            "medM2": round(median(m2)) if m2 else None,
+            "medDays": round(median(days)) if days is not None and days else None,
+            "pctCut": round(cuts / len(rows) * 100, 1),
+        }
+
+    rows_out = []
+    for t in TYPES:
+        by_t = [r for r in listings if r["t"] == t]
+        a = agg(by_t)
+        if a:
+            rows_out.append({"date": date_str, "scope": "all", "type": t, **a})
+        for slug in MUNICIPALITIES:
+            sub = [r for r in by_t if r["muni"] == slug]
+            a = agg(sub)
+            if a:
+                rows_out.append({"date": date_str, "scope": slug, "type": t, **a})
+    return rows_out
+
+
+def median(arr):
+    if not arr:
+        return None
+    a = sorted(arr)
+    m = len(a) // 2
+    return a[m] if len(a) % 2 else (a[m - 1] + a[m]) / 2
+
+
+def merge_history(data_dir, new_rows, date_str, keep_days=800):
+    path = os.path.join(data_dir, "history.json")
+    series = []
+    if os.path.exists(path):
+        try:
+            series = json.load(open(path, encoding="utf-8")).get("series", [])
+        except Exception:
+            series = []
+    series = [r for r in series if r.get("date") != date_str]   # replace today
+    series.extend(new_rows)
+    dates = sorted({r["date"] for r in series})
+    if len(dates) > keep_days:
+        cutoff = set(dates[-keep_days:])
+        series = [r for r in series if r["date"] in cutoff]
+    series.sort(key=lambda r: (r["date"], r["scope"], r["type"]))
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"series": series}, f, ensure_ascii=False, separators=(",", ":"))
+    return len({r["date"] for r in series})
+
+
 def main():
     out = []
     counts = {"condo": 0, "villa": 0}
-    for muni, name in MUNICIPALITIES.items():
+    for muni, (name, _code) in MUNICIPALITIES.items():
         for t in TYPES:
             got = 0
             for case in fetch(muni, t):
@@ -183,7 +414,6 @@ def main():
                 counts[rec["t"]] += 1
                 got += 1
             print(f"  {name:16} {t:6} {got}")
-    # de-duplicate on id (a listing can appear once per muni only, but be safe)
     uniq = {r["id"]: r for r in out if r["id"]}
     listings = list(uniq.values())
 
@@ -194,13 +424,29 @@ def main():
     with open(os.path.join(data_dir, "listings.json"), "w", encoding="utf-8") as f:
         json.dump(listings, f, ensure_ascii=False, separators=(",", ":"))
 
+    print("Fetching municipality boundaries…")
+    geo = fetch_boundaries()
+    with open(os.path.join(data_dir, "geo.json"), "w", encoding="utf-8") as f:
+        json.dump(geo, f, ensure_ascii=False, separators=(",", ":"))
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    ndates = merge_history(data_dir, snapshot(listings, today), today)
+
+    print("Fetching Danmarks Statistik price index (EJ56)…")
+    dst = fetch_dst_index()
+    if dst:
+        with open(os.path.join(data_dir, "priceindex.json"), "w", encoding="utf-8") as f:
+            json.dump(dst, f, ensure_ascii=False, separators=(",", ":"))
+
     meta = {
         "generatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": "boligsiden.dk",
         "total": len(listings),
         "counts": {"condo": counts["condo"], "villa": counts["villa"]},
         "strainNearM": STRAIN_NEAR_M,
-        "municipalities": [{"slug": s, "name": n} for s, n in MUNICIPALITIES.items()],
+        "historyDays": ndates,
+        "municipalities": [{"slug": s, "name": v[0], "hasGeo": s in geo}
+                           for s, v in MUNICIPALITIES.items()],
         "stations": [
             {"name": n, "corridor": c, "lat": la, "lon": lo, "strain": st}
             for (n, c, la, lo, st) in STATIONS
@@ -211,8 +457,8 @@ def main():
     with open(os.path.join(data_dir, "meta.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, separators=(",", ":"))
 
-    print(f"\nWrote {len(listings)} listings "
-          f"(condo={counts['condo']}, villa={counts['villa']}) to data/")
+    print(f"\nWrote {len(listings)} listings (condo={counts['condo']}, "
+          f"villa={counts['villa']}), {len(geo)} boundaries, {ndates} history date(s).")
 
 
 if __name__ == "__main__":

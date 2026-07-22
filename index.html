@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hovedstaden Boliger — boligmarkedet langs S-toget</title>
-<meta name="description" content="Overblik over boligmarkedet i hovedstadsområdet — ejerlejligheder og villaer fra København til Hillerød, med fokus på nærhed til S-toget. Data fra boligsiden.dk.">
+<meta name="description" content="Overblik over boligmarkedet i hovedstadsområdet — ejerlejligheder og villaer fra København til Hillerød, med fokus på nærhed til S-toget. Data fra boligsiden.dk og Danmarks Statistik.">
 <meta name="robots" content="noindex">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%232a78d6'/%3E%3Cpath d='M28 62 L50 30 L72 62 Z' fill='white'/%3E%3Crect x='44' y='52' width='12' height='14' fill='%232a78d6'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="styles.css">
@@ -26,47 +26,69 @@
   </header>
 
   <div class="controls">
-    <div class="seg" id="typeSeg" role="tablist" aria-label="Boligtype">
-      <button data-type="condo" class="active">Ejerlejligheder</button>
-      <button data-type="villa">Villaer</button>
-      <button data-type="all">Begge</button>
-    </div>
-
-    <div class="filters">
-      <label class="filter check">
-        <input type="checkbox" id="nearS"> Kun nær S-tog
-        <span class="hint" id="nearSHint"></span>
-      </label>
-      <label class="filter">
-        <span>Maks. pris</span>
-        <select id="priceMax">
-          <option value="">Alle</option>
-          <option value="2000000">2 mio.</option>
-          <option value="3000000">3 mio.</option>
-          <option value="4000000">4 mio.</option>
-          <option value="5000000">5 mio.</option>
-          <option value="7500000">7,5 mio.</option>
-          <option value="10000000">10 mio.</option>
-          <option value="15000000">15 mio.</option>
-        </select>
-      </label>
-      <label class="filter">
-        <span>Min. værelser</span>
-        <select id="rooms">
-          <option value="">Alle</option>
-          <option value="2">2+</option>
-          <option value="3">3+</option>
-          <option value="4">4+</option>
-          <option value="5">5+</option>
-        </select>
-      </label>
+    <div class="controls-top">
+      <div class="seg" id="typeSeg" role="tablist" aria-label="Boligtype">
+        <button data-type="all" class="active">Begge</button>
+        <button data-type="condo">Ejerlejligheder</button>
+        <button data-type="villa">Villaer</button>
+      </div>
       <label class="filter grow">
         <span>Søg adresse / område</span>
         <input type="search" id="search" placeholder="fx Holte, Østerbro, Strandvej…">
       </label>
+      <label class="filter check big">
+        <input type="checkbox" id="nearS"> Kun nær S-tog <span class="hint" id="nearSHint"></span>
+      </label>
     </div>
 
     <div class="muni-chips" id="muniChips" aria-label="Kommuner"></div>
+
+    <details class="more" id="moreFilters">
+      <summary>Flere filtre <span class="active-count" id="filterCount"></span></summary>
+      <div class="filter-grid">
+        <label class="filter"><span>Pris (min)</span>
+          <select id="priceMin"><option value="">–</option></select></label>
+        <label class="filter"><span>Pris (maks)</span>
+          <select id="priceMax"><option value="">–</option></select></label>
+        <label class="filter"><span>Min. værelser</span>
+          <select id="rooms"><option value="">Alle</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label>
+        <label class="filter"><span>Boligstørrelse m² (min)</span>
+          <select id="areaMin"><option value="">–</option><option>40</option><option>60</option><option>80</option><option>100</option><option>120</option><option>150</option><option>200</option></select></label>
+        <label class="filter"><span>Boligstørrelse m² (maks)</span>
+          <select id="areaMax"><option value="">–</option><option>60</option><option>80</option><option>100</option><option>120</option><option>150</option><option>200</option><option>300</option></select></label>
+        <label class="filter"><span>Grundstørrelse m² (min) <em>villa</em></span>
+          <select id="lotMin"><option value="">–</option><option>300</option><option>500</option><option>700</option><option>1000</option><option>1500</option><option>2000</option></select></label>
+        <label class="filter"><span>Min. etage <em>lejl.</em></span>
+          <select id="floorMin"><option value="">Alle</option><option value="0">Stue+</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option><option value="4">4+</option></select></label>
+        <label class="filter"><span>Byggeår (efter)</span>
+          <select id="yearMin"><option value="">Alle</option><option>1900</option><option>1950</option><option>1970</option><option>1990</option><option>2000</option><option>2010</option><option>2020</option></select></label>
+        <label class="filter"><span>Maks. dage til salg</span>
+          <select id="daysMax"><option value="">Alle</option><option>14</option><option>30</option><option>60</option><option>90</option><option>180</option></select></label>
+        <label class="filter"><span>Energimærke (mindst)</span>
+          <select id="energyMin"><option value="">Alle</option><option>a</option><option>b</option><option>c</option><option>d</option><option>e</option></select></label>
+        <label class="filter check"><input type="checkbox" id="hasBasement"> Kælder</label>
+        <label class="filter check"><input type="checkbox" id="hasElevator"> Elevator</label>
+        <label class="filter check"><input type="checkbox" id="hasBalcony"> Altan/terrasse</label>
+        <button class="reset-btn" id="resetFilters" type="button">Nulstil filtre</button>
+      </div>
+    </details>
+
+    <details class="more commute" id="commutePanel">
+      <summary>🏠→💼 Find bolig mellem hjem og arbejde</summary>
+      <p class="commute-help">Skriv en adresse (fx nuværende bolig og arbejdsplads). Vi viser kun boliger inden for den valgte radius af hvert punkt — og tegner dem på kortet.</p>
+      <div class="commute-grid">
+        <div class="geo-field">
+          <label>🏠 Punkt A (fx arbejde)</label>
+          <div class="geo-input"><input type="text" id="addrA" autocomplete="off" placeholder="Adresse…"><div class="geo-sug" id="sugA"></div></div>
+          <label class="rad">Radius <b id="radAVal">3</b> km <input type="range" id="radA" min="1" max="20" value="3"></label>
+        </div>
+        <div class="geo-field">
+          <label>💼 Punkt B (fx arbejde/skole)</label>
+          <div class="geo-input"><input type="text" id="addrB" autocomplete="off" placeholder="Adresse…"><div class="geo-sug" id="sugB"></div></div>
+          <label class="rad">Radius <b id="radBVal">3</b> km <input type="range" id="radB" min="1" max="20" value="3"></label>
+        </div>
+      </div>
+    </details>
   </div>
 
   <section class="kpis" id="kpis" aria-label="Nøgletal"></section>
@@ -87,12 +109,31 @@
         </div>
       </div>
       <div class="map-body">
-        <div id="map" class="map-wrap"></div>
+        <div class="map-wrap">
+          <div id="map"></div>
+          <div class="map-zoom">
+            <button id="zoomIn" title="Zoom ind">+</button>
+            <button id="zoomOut" title="Zoom ud">−</button>
+            <button id="zoomReset" title="Nulstil kort">⤢</button>
+          </div>
+        </div>
         <aside class="map-side">
           <div id="mapFacts" class="map-facts"></div>
           <div id="mapLegend" class="map-legend"></div>
         </aside>
       </div>
+    </div>
+
+    <div class="card wide">
+      <div class="card-head">
+        <h2>Prisudvikling <span class="src">· Danmarks Statistik, 1992–</span></h2>
+        <div class="chart-controls">
+          <label>Område
+            <select id="dstArea"></select>
+          </label>
+        </div>
+      </div>
+      <div id="chartIndex" class="chart"></div>
     </div>
 
     <div class="card">
@@ -101,15 +142,30 @@
     </div>
 
     <div class="card">
-      <div class="card-head">
-        <h2>S-togs­premie — pris pr. m² efter afstand til S-tog</h2>
-      </div>
+      <div class="card-head"><h2>S-togs­premie — pris pr. m² efter afstand til S-tog</h2></div>
       <div id="chartDist" class="chart"></div>
     </div>
 
     <div class="card">
       <div class="card-head"><h2>Liggetid — hvor længe er boligerne til salg</h2></div>
       <div id="chartDays" class="chart"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>Marked over tid <span class="src" id="trendSrc"></span></h2>
+        <div class="chart-controls">
+          <label>Vis
+            <select id="trendMetric">
+              <option value="medM2">Pris pr. m²</option>
+              <option value="medDays">Liggetid</option>
+              <option value="pctCut">Prisnedsættelser</option>
+              <option value="n">Antal til salg</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div id="chartTrend" class="chart"></div>
     </div>
   </section>
 
@@ -134,8 +190,10 @@
   </section>
 
   <footer class="foot">
-    <p>Data hentet fra <a href="https://www.boligsiden.dk" target="_blank" rel="noopener">boligsiden.dk</a>s offentlige API og opdateres dagligt.
-    Uofficielt hobbyprojekt — ingen garanti for fuldstændighed. Priser er udbudspriser, ikke realiserede salgspriser.</p>
+    <p>Boligdata fra <a href="https://www.boligsiden.dk" target="_blank" rel="noopener">boligsiden.dk</a> (udbudspriser, opdateres dagligt) ·
+    prisindeks fra <a href="https://www.statistikbanken.dk/EJ56" target="_blank" rel="noopener">Danmarks Statistik (EJ56)</a> ·
+    adressesøgning og kommunegrænser fra <a href="https://dataforsyningen.dk" target="_blank" rel="noopener">Dataforsyningen</a>.
+    Uofficielt hobbyprojekt uden garanti.</p>
   </footer>
 </div>
 
