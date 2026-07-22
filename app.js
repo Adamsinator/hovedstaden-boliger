@@ -36,7 +36,7 @@ const haversine = (la1, lo1, la2, lo2) => {
 };
 const ENERGY_ORDER = { a: 7, b: 6, c: 5, d: 4, e: 3, f: 2, g: 1 };
 const energyRank = e => { if (!e) return 0; return ENERGY_ORDER[String(e)[0].toLowerCase()] || 0; };
-const PRICES = [1e6, 1.5e6, 2e6, 2.5e6, 3e6, 4e6, 5e6, 7.5e6, 10e6, 15e6, 20e6, 30e6];
+const PRICES = [1e6, 1.5e6, 2e6, 2.5e6, 3e6, 4e6, 5e6, 7.5e6, 10e6, 15e6, 20e6, 30e6, 50e6, 75e6, 100e6, 150e6];
 
 /* ===================== load ===================== */
 async function boot() {
@@ -50,34 +50,13 @@ async function boot() {
     ]);
     S.meta = meta; S.all = listings; S.geo = geo; S.index = index; S.history = history;
     meta.municipalities.forEach(m => S.munis.add(m.slug));
-    buildProjection();
     initUI();
+    initMap();
     render();
-    resetView();
   } catch (e) {
     $('#map').innerHTML = '<div class="loading">Kunne ikke hente data.</div>';
     console.error(e);
   }
-}
-
-/* ===================== projection (shared) ===================== */
-const P = {};
-function buildProjection() {
-  let mnx = 1e9, mny = 1e9, mxx = -1e9, mxy = -1e9;
-  const bump = (lo, la) => { mnx = Math.min(mnx, lo); mxx = Math.max(mxx, lo); mny = Math.min(mny, la); mxy = Math.max(mxy, la); };
-  Object.values(S.geo || {}).forEach(g => { const b = g.bbox; bump(b[0], b[1]); bump(b[2], b[3]); });
-  (S.meta.stations || []).forEach(s => bump(s.lon, s.lat));
-  if (mnx === 1e9) { S.all.forEach(r => bump(r.lon, r.lat)); }
-  const padx = (mxx - mnx) * .03, pady = (mxy - mny) * .03;
-  mnx -= padx; mxx += padx; mny -= pady; mxy += pady;
-  const latMid = (mny + mxy) / 2, kx = Math.cos(latMid * Math.PI / 180);
-  const gW = (mxx - mnx) * kx, gH = (mxy - mny);
-  P.W = 1000; P.H = Math.round(P.W * gH / gW);
-  P.x = lon => (lon - mnx) * kx / gW * P.W;
-  P.y = lat => (mxy - lat) / gH * P.H;
-  P.kmToUnitsX = km => km / 111.32 * kx / gW * P.W; // approx horizontal
-  P.kmToUnitsY = km => km / 110.57 / gH * P.H;
-  P.bboxLonLat = { mnx, mny, mxx, mxy };
 }
 
 /* ===================== UI ===================== */
@@ -130,19 +109,16 @@ function initUI() {
   $('#loadMore').addEventListener('click', () => { S.shown += 60; renderCards(filtered()); });
   $('#resetFilters').addEventListener('click', resetFilters);
 
-  // DST area select
+  // DST area select — only the corridor landsdele we can anchor to real kr/m²
   if (S.index) {
     const sel = $('#dstArea');
-    S.index.areas.forEach(a => sel.append(el('option', { value: a.id }, a.name)));
+    S.index.areas.filter(a => DST_LANDSDEL_MUNIS[a.id]).forEach(a => sel.append(el('option', { value: a.id }, a.name)));
     sel.value = S.dstArea;
     sel.addEventListener('change', e => { S.dstArea = e.target.value; renderIndexChart(); });
   }
   $('#trendMetric').addEventListener('change', renderTrendChart);
 
-  // map zoom buttons
-  $('#zoomIn').addEventListener('click', () => zoomBy(0.7));
-  $('#zoomOut').addEventListener('click', () => zoomBy(1 / 0.7));
-  $('#zoomReset').addEventListener('click', resetView);
+  // (map pan / zoom / double-click zoom is native Leaflet)
 
   // home / work geocoding
   setupGeo('A'); setupGeo('B');
@@ -158,7 +134,7 @@ function initUI() {
     const dark = cur ? cur === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
     document.documentElement.setAttribute('data-theme', dark ? 'light' : 'dark');
     localStorage.setItem('hbTheme', dark ? 'light' : 'dark');
-    render();
+    refreshMapTheme(); render();
   });
 }
 
@@ -402,27 +378,48 @@ function lineChart(mount, xLabels, series, opt = {}) {
   }
 }
 
+// DST landsdele → the corridor municipalities they contain (for anchoring the
+// index to today's real kr/m²). 084/000 aren't shown (can't anchor to our data).
+const DST_LANDSDEL_MUNIS = {
+  '01': ['koebenhavn', 'frederiksberg'],
+  '02': ['gentofte', 'lyngby-taarbaek', 'gladsaxe', 'herlev', 'ballerup'],
+  '03': ['rudersdal', 'furesoe', 'alleroed', 'hilleroed', 'hoersholm', 'egedal', 'fredensborg'],
+};
+function currentKrM2(areaId, type) {
+  const set = new Set(DST_LANDSDEL_MUNIS[areaId] || []);
+  return median(S.all.filter(r => r.t === type && set.has(r.muni)).map(r => r.m2p).filter(Boolean));
+}
 function renderIndexChart() {
   const mount = $('#chartIndex'); if (!S.index) { mount.innerHTML = ''; return; }
   const q = S.index.quarters, area = S.dstArea;
   const xticks = [];
   q.forEach((qq, i) => { if (qq.endsWith('K1') && (+qq.slice(0, 4)) % 4 === 0) xticks.push([i, qq.slice(0, 4)]); });
-  const mk = (cat, color, name) => ({ name, color, values: (S.index.series[area + '|' + cat] || []).map(v => v) });
+  const lastIdx = arr => { for (let i = arr.length - 1; i >= 0; i--) if (arr[i] != null) return arr[i]; return null; };
+  // convert the DST index into estimated kr/m², anchored so the latest quarter
+  // equals today's actual median kr/m² for that landsdel + type.
+  const toKrM2 = (cat, type) => {
+    const arr = S.index.series[area + '|' + cat] || [];
+    const base = lastIdx(arr), anchor = currentKrM2(area, type);
+    if (!base || !anchor) return arr.map(() => null);
+    return arr.map(v => v == null ? null : Math.round(v / base * anchor));
+  };
   const series = [];
-  if (S.type !== 'villa') series.push(mk('condo', cssVar('--condo'), 'Ejerlejlighed'));
-  if (S.type !== 'condo') series.push(mk('villa', cssVar('--villa'), 'Villa/hus'));
-  lineChart(mount, q, series, {
-    xticks, legend: true, yfmt: v => Math.round(v),
-    tfmt: v => v == null ? '–' : v.toLocaleString('da-DK', { maximumFractionDigits: 1 }),
-  });
+  if (S.type !== 'villa') series.push({ name: 'Ejerlejlighed', color: cssVar('--condo'), values: toKrM2('condo', 'condo') });
+  if (S.type !== 'condo') series.push({ name: 'Villa/hus', color: cssVar('--villa'), values: toKrM2('villa', 'villa') });
+  lineChart(mount, q, series, { xticks, legend: true, yfmt: m2short, tfmt: m2 });
+  const areaName = (S.index.areas.find(a => a.id === area) || {}).name || '';
+  mount.append(el('p', { class: 'chart-note' },
+    `Estimeret kr/m² for ${areaName}: Danmarks Statistiks kvartalsvise prisindeks (EJ56) skaleret, så seneste kvartal svarer til det aktuelle medianniveau. Viser prisernes bevægelse siden 1992, ikke faktiske historiske udbudspriser.`));
 }
+const m2short = v => v == null ? '–' : Math.round(v / 1000) + 'k';
 
 function renderTrendChart() {
   const mount = $('#chartTrend'); const hist = (S.history && S.history.series) || [];
   const metric = $('#trendMetric').value;
   const scope = S.munis.size === 1 ? [...S.munis][0] : 'all';
+  const scopeName = scope === 'all' ? 'hele korridoren' : (S.meta.municipalities.find(m => m.slug === scope) || {}).name;
   const dates = [...new Set(hist.filter(r => r.scope === scope).map(r => r.date))].sort();
-  $('#trendSrc').textContent = dates.length < 2 ? '· bygges op fra ' + (dates[0] || '') : '· daglige målinger';
+  $('#trendSrc').textContent = '· ' + scopeName + (dates.length < 2 ? ' · bygges op fra ' + (dates[0] || '') : ' · vores daglige målinger');
   const pick = (t, d) => { const row = hist.find(r => r.scope === scope && r.type === t && r.date === d); return row ? row[metric] : null; };
   const series = [];
   if (S.type !== 'villa') series.push({ name: 'Ejerlejlighed', color: cssVar('--condo'), values: dates.map(d => pick('condo', d)) });
@@ -441,152 +438,137 @@ function makeScale(vals, invert) {
   return v => { if (v == null) return cssVar('--muted'); let t = (v - lo) / (hi - lo || 1); t = Math.max(0, Math.min(1, t)); if (invert) t = 1 - t; return ramp[Math.min(ramp.length - 1, Math.floor(t * ramp.length))]; };
 }
 
-/* ===================== MAP ===================== */
-const MAP = { view: null, dots: [], stationEls: [], labelEls: [], svg: null };
-function drawMap(f) {
-  const mount = $('#map'); mount.innerHTML = '';
-  const svg = svel('svg', { viewBox: `0 0 ${P.W} ${P.H}`, role: 'img', 'aria-label': 'Kort over boliger og S-togsnettet' });
-  MAP.svg = svg;
-  const lineColors = { central: cssVar('--ink-2'), hilleroed: cssVar('--condo'), klampenborg: '#1baf7a', farum: '#7a5cff', frederikssund: '#eda100', kystbanen: cssVar('--muted') };
+/* ===================== MAP (Leaflet + tiles) ===================== */
+const MAP = { map: null, tiles: null, L: {}, renderer: null, inited: false };
+const LINE_COLORS = () => ({ central: cssVar('--ink-2'), hilleroed: cssVar('--condo'), klampenborg: '#12a06f', farum: '#7a5cff', frederikssund: '#e08a00', kystbanen: cssVar('--muted') });
+const BIG_STATIONS = new Set(['København H', 'Hellerup', 'Nørreport', 'Lyngby', 'Holte', 'Birkerød', 'Allerød', 'Hillerød', 'Farum', 'Værløse', 'Ballerup', 'Herlev', 'Klampenborg', 'Charlottenlund', 'Gentofte', 'Bagsværd', 'Rungsted Kyst', 'Nivå', 'Ordrup', 'Buddinge', 'Svanemøllen', 'Virum']);
 
-  // ---- land (municipality polygons) ----
-  const gLand = svel('g', {});
+function isDark() { const t = document.documentElement.getAttribute('data-theme'); return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; }
+function tileUrl() {
+  return isDark()
+    ? 'https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png'
+    : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+}
+function regionBounds() {
+  let a = 1e9, b = 1e9, c = -1e9, d = -1e9;
+  Object.values(S.geo || {}).forEach(g => { const x = g.bbox; a = Math.min(a, x[1]); b = Math.min(b, x[0]); c = Math.max(c, x[3]); d = Math.max(d, x[2]); });
+  if (a === 1e9) { S.all.forEach(r => { a = Math.min(a, r.lat); b = Math.min(b, r.lon); c = Math.max(c, r.lat); d = Math.max(d, r.lon); }); }
+  return [[a, b], [c, d]];
+}
+
+function initMap() {
+  const map = L.map('map', { preferCanvas: true, zoomControl: true, minZoom: 8, maxZoom: 18, doubleClickZoom: true, scrollWheelZoom: true });
+  MAP.map = map;
+  MAP.renderer = L.canvas({ padding: 0.4 });
+  L.control.scale({ imperial: false }).addTo(map);
+  setTiles();
+  MAP.L.boundaries = L.layerGroup().addTo(map);
+  MAP.L.rail = L.layerGroup().addTo(map);
+  MAP.L.listings = L.layerGroup().addTo(map);
+  MAP.L.stations = L.layerGroup().addTo(map);
+  MAP.L.geo = L.layerGroup().addTo(map);
+  map.fitBounds(regionBounds(), { padding: [12, 12] });
+  drawRail(); drawStations();
+  map.on('mouseout', hideTip);
+  setTimeout(() => map.invalidateSize(), 200);
+  addEventListener('resize', () => map.invalidateSize());
+  MAP.inited = true;
+}
+function setTiles() {
+  if (MAP.tiles) MAP.map.removeLayer(MAP.tiles);
+  MAP.tiles = L.tileLayer(tileUrl(), {
+    subdomains: 'abcd', maxZoom: 19, detectRetina: true,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  });
+  MAP.tiles.addTo(MAP.map); MAP.tiles.bringToBack();
+}
+
+function drawRail() {
+  MAP.L.rail.clearLayers();
+  const stMap = Object.fromEntries(S.meta.stations.map(s => [s.name, s]));
+  const col = LINE_COLORS();
+  S.meta.lines.forEach(Ln => {
+    const pts = Ln.stops.map(n => stMap[n]).filter(Boolean).map(s => [s.lat, s.lon]);
+    L.polyline(pts, { color: col[Ln.corridor], weight: 4, opacity: .85, lineCap: 'round', lineJoin: 'round', dashArray: Ln.corridor === 'kystbanen' ? '3 8' : null }).addTo(MAP.L.rail);
+  });
+}
+function drawStations() {
+  MAP.L.stations.clearLayers();
+  const col = LINE_COLORS();
+  S.meta.stations.forEach(s => {
+    L.circleMarker([s.lat, s.lon], { renderer: MAP.renderer, radius: s.strain ? 4 : 3, color: col[s.corridor], weight: 2, fillColor: cssVar('--surface'), fillOpacity: 1 })
+      .addTo(MAP.L.stations).bindTooltip(s.name + (s.strain ? '' : ' · Kystbanen'), { direction: 'top', offset: [0, -4] });
+    if (BIG_STATIONS.has(s.name))
+      L.marker([s.lat, s.lon], { icon: L.divIcon({ className: 'st-name', html: s.name, iconSize: [90, 12], iconAnchor: [-6, 6] }), interactive: false, keyboard: false }).addTo(MAP.L.stations);
+  });
+}
+function drawBoundaries() {
+  MAP.L.boundaries.clearLayers();
+  const partial = S.munis.size > 0 && S.munis.size < S.meta.municipalities.length;
   S.meta.municipalities.forEach(m => {
     const g = S.geo[m.slug]; if (!g) return;
     const sel = S.munis.has(m.slug);
     g.rings.forEach(ring => {
-      const d = ring.map((p, i) => (i ? 'L' : 'M') + P.x(p[0]).toFixed(1) + ' ' + P.y(p[1]).toFixed(1)).join(' ') + ' Z';
-      gLand.append(svel('path', { d, class: 'muni-land' + (sel ? ' sel' : ' dim') }));
+      L.polygon(ring.map(p => [p[1], p[0]]), {
+        color: sel ? cssVar('--land-sel-edge') : cssVar('--muted'),
+        weight: sel ? 2 : 1, opacity: partial ? (sel ? 0.95 : 0.28) : 0.5,
+        fill: partial && sel, fillColor: cssVar('--condo'), fillOpacity: 0.07,
+        interactive: false,
+      }).addTo(MAP.L.boundaries);
     });
   });
-  svg.append(gLand);
-
-  // ---- rail lines ----
-  const stMap = Object.fromEntries(S.meta.stations.map(s => [s.name, s]));
-  const gLines = svel('g', {});
-  S.meta.lines.forEach(L => {
-    const pts = L.stops.map(n => stMap[n]).filter(Boolean).map(s => `${P.x(s.lon).toFixed(1)},${P.y(s.lat).toFixed(1)}`).join(' ');
-    gLines.append(svel('polyline', { points: pts, class: 'rail-line', stroke: lineColors[L.corridor], 'stroke-width': 3, opacity: .6, 'stroke-dasharray': L.corridor === 'kystbanen' ? '2 6' : '' }));
-  });
-  svg.append(gLines);
-
-  // ---- listing dots ----
+}
+function listingTip(r) {
+  return `<div class="tt-title">${r.adr}</div><div class="tt-row"><span>${r.city}</span><b>${r.t === 'villa' ? 'Villa' : 'Ejerlejl.'}</b></div><div class="tt-row"><span>Pris</span><b>${krM(r.p)}</b></div><div class="tt-row"><span>Pris/m²</span><b>${m2(r.m2p)}</b></div><div class="tt-row"><span>Størrelse</span><b>${r.a} m² · ${r.r} vær.</b></div><div class="tt-row"><span>Liggetid</span><b>${r.d} dage</b></div><div class="tt-row"><span>S-tog</span><b>${r.ssn} · ${r.sst} m</b></div>`;
+}
+function drawListings(f) {
+  MAP.L.listings.clearLayers();
   let cAcc;
   if (S.colorBy === 'type') cAcc = r => r.t === 'villa' ? cssVar('--villa') : cssVar('--condo');
   else { const scale = makeScale(f.map(r => r[S.colorBy]).filter(v => v != null), S.colorBy === 'd'); cAcc = r => scale(r[S.colorBy]); }
-  const gDots = svel('g', {}); MAP.dots = [];
-  f.forEach(r => { const c = svel('circle', { cx: P.x(r.lon).toFixed(1), cy: P.y(r.lat).toFixed(1), r: 2.4, fill: cAcc(r), class: 'listing-dot' }); c._r = r; gDots.append(c); MAP.dots.push(c); });
-  svg.append(gDots);
-  gDots.addEventListener('mousemove', e => {
-    const t = e.target; if (t.tagName !== 'circle' || !t._r) return; const r = t._r;
-    showTip(`<div class="tt-title">${r.adr}</div><div class="tt-row"><span>${r.city}</span><b>${r.t === 'villa' ? 'Villa' : 'Ejerlejl.'}</b></div><div class="tt-row"><span>Pris</span><b>${krM(r.p)}</b></div><div class="tt-row"><span>Pris/m²</span><b>${m2(r.m2p)}</b></div><div class="tt-row"><span>Størrelse</span><b>${r.a} m² · ${r.r} vær.</b></div><div class="tt-row"><span>Liggetid</span><b>${r.d} dage</b></div><div class="tt-row"><span>S-tog</span><b>${r.ssn} ${r.sst} m</b></div>`, e.clientX, e.clientY);
-  }, true);
-  gDots.addEventListener('mouseout', e => { if (e.target.tagName === 'circle') hideTip(); }, true);
-  gDots.addEventListener('click', e => { const t = e.target; if (t._r && t._r.url) window.open(t._r.url, '_blank', 'noopener'); });
-
-  // ---- home / work markers + radius circles ----
-  const gGeo = svel('g', {});
-  const marker = (pt, rad, label, emoji) => {
+  f.forEach(r => {
+    const mk = L.circleMarker([r.lat, r.lon], { renderer: MAP.renderer, radius: 4, color: cssVar('--surface'), weight: .7, fillColor: cAcc(r), fillOpacity: .95 });
+    mk.on('mouseover', ev => showTip(listingTip(r), ev.originalEvent.clientX, ev.originalEvent.clientY));
+    mk.on('mousemove', ev => showTip(listingTip(r), ev.originalEvent.clientX, ev.originalEvent.clientY));
+    mk.on('mouseout', hideTip);
+    mk.on('click', () => { if (r.url) window.open(r.url, '_blank', 'noopener'); });
+    mk.addTo(MAP.L.listings);
+  });
+}
+function drawGeoPoints() {
+  MAP.L.geo.clearLayers();
+  const add = (pt, rad, emoji) => {
     if (!pt) return;
-    const cx = P.x(pt.lon), cy = P.y(pt.lat);
-    const rxu = P.kmToUnitsX(rad), ryu = P.kmToUnitsY(rad);
-    gGeo.append(svel('ellipse', { cx, cy, rx: rxu, ry: ryu, class: 'geo-radius' }));
-    const pin = svel('g', { class: 'geo-pin' }); pin._noscaleAt = [cx, cy];
-    pin.append(svel('circle', { cx, cy, r: 7, class: 'geo-pin-dot' }));
-    const tx = svel('text', { x: cx, y: cy + 3.3, 'text-anchor': 'middle', class: 'geo-pin-emoji' }); tx.textContent = emoji; pin.append(tx);
-    gGeo.append(pin); MAP.stationEls.push(pin);
+    L.circle([pt.lat, pt.lon], { radius: rad * 1000, color: cssVar('--condo'), weight: 1.5, dashArray: '5 5', fillColor: cssVar('--condo'), fillOpacity: .06 }).addTo(MAP.L.geo);
+    L.marker([pt.lat, pt.lon], { icon: L.divIcon({ className: 'geo-pin2', html: `<span>${emoji}</span>`, iconSize: [30, 30], iconAnchor: [15, 15] }) }).addTo(MAP.L.geo).bindTooltip(pt.name, { direction: 'top', offset: [0, -12] });
   };
-  MAP.stationEls = [];
-  marker(S.A, S.radA, 'A', '🏠'); marker(S.B, S.radB, 'B', '💼');
+  add(S.A, S.radA, '🏠'); add(S.B, S.radB, '💼');
+}
 
-  // ---- stations ----
-  const bigStations = new Set(['København H', 'Hellerup', 'Nørreport', 'Lyngby', 'Holte', 'Birkerød', 'Allerød', 'Hillerød', 'Farum', 'Værløse', 'Ballerup', 'Herlev', 'Klampenborg', 'Charlottenlund', 'Gentofte', 'Bagsværd', 'Rungsted Kyst', 'Nivå', 'Ordrup', 'Buddinge']);
-  const gSt = svel('g', {}); MAP.labelEls = []; const stDots = [];
-  S.meta.stations.forEach(s => {
-    const cx = P.x(s.lon), cy = P.y(s.lat);
-    const dot = svel('circle', { cx, cy, r: s.strain ? 3 : 2.6, class: 'st-dot', stroke: lineColors[s.corridor] }); gSt.append(dot); stDots.push(dot);
-    if (bigStations.has(s.name)) { const tx = svel('text', { x: cx + 5, y: cy + 3, class: 'st-label' }); tx.textContent = s.name; gSt.append(tx); MAP.labelEls.push(tx); }
-  });
-  MAP.stDots = stDots;
-  svg.append(gSt);
-
-  // pan / zoom
-  attachPanZoom(svg);
-  svg.append(gGeo); // geo on top for visibility
-  mount.append(svg);
-  applyViewScale();
-
+function drawMap(f) {
+  if (!MAP.inited) return;
+  drawBoundaries();
+  drawListings(f);
+  drawGeoPoints();
   renderMapFacts(f);
-  renderMapLegend(S.colorBy, f, lineColors);
+  renderMapLegend(S.colorBy, f, LINE_COLORS());
 }
 
-function attachPanZoom(svg) {
-  if (!MAP.view) MAP.view = { x: 0, y: 0, w: P.W, h: P.H };
-  applyView();
-  let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
-  svg.addEventListener('pointerdown', e => { dragging = true; sx = e.clientX; sy = e.clientY; ox = MAP.view.x; oy = MAP.view.y; svg.classList.add('grabbing'); svg.setPointerCapture(e.pointerId); });
-  svg.addEventListener('pointermove', e => {
-    if (!dragging) return; const r = svg.getBoundingClientRect();
-    MAP.view.x = ox - (e.clientX - sx) / r.width * MAP.view.w;
-    MAP.view.y = oy - (e.clientY - sy) / r.height * MAP.view.h;
-    clampView(); applyView();
-  });
-  const end = e => { dragging = false; svg.classList.remove('grabbing'); };
-  svg.addEventListener('pointerup', end); svg.addEventListener('pointercancel', end);
-  svg.addEventListener('wheel', e => {
-    e.preventDefault(); const r = svg.getBoundingClientRect();
-    const mx = MAP.view.x + (e.clientX - r.left) / r.width * MAP.view.w;
-    const my = MAP.view.y + (e.clientY - r.top) / r.height * MAP.view.h;
-    zoomAt(mx, my, e.deltaY < 0 ? 0.85 : 1 / 0.85);
-  }, { passive: false });
-}
-function clampView() {
-  const v = MAP.view;
-  v.w = Math.min(v.w, P.W); v.h = Math.min(v.h, P.H);
-  v.x = Math.max(-P.W * .05, Math.min(v.x, P.W - v.w + P.W * .05));
-  v.y = Math.max(-P.H * .05, Math.min(v.y, P.H - v.h + P.H * .05));
-}
-function applyView() { const v = MAP.view; MAP.svg.setAttribute('viewBox', `${v.x.toFixed(1)} ${v.y.toFixed(1)} ${v.w.toFixed(1)} ${v.h.toFixed(1)}`); applyViewScale(); }
-function applyViewScale() {
-  if (!MAP.view) return;
-  const k = MAP.view.w / P.W; // 1 = full, <1 zoomed in
-  const dotR = Math.max(1.1, 2.4 * Math.pow(k, .75));
-  MAP.dots.forEach(d => d.setAttribute('r', dotR));
-  (MAP.stDots || []).forEach(d => d.setAttribute('r', (d.classList.contains('st-dot') ? 3 : 2.6) * Math.pow(k, .8)));
-  MAP.labelEls.forEach(t => { t.style.fontSize = (9 * k) + 'px'; t.style.display = k < 0.42 ? '' : (k > 0.9 ? '' : ''); });
-  MAP.labelEls.forEach(t => t.setAttribute('font-size', (9 * k)));
-}
-function zoomAt(cx, cy, factor) {
-  const v = MAP.view; const nw = v.w * factor, nh = v.h * factor;
-  v.x = cx - (cx - v.x) * (nw / v.w); v.y = cy - (cy - v.y) * (nh / v.h); v.w = nw; v.h = nh;
-  clampView(); applyView();
-}
-function zoomBy(factor) { zoomAt(MAP.view.x + MAP.view.w / 2, MAP.view.y + MAP.view.h / 2, factor); }
-function resetView() { MAP.view = { x: 0, y: 0, w: P.W, h: P.H }; if (MAP.svg) applyView(); }
-function fitBBox(mnx, mny, mxx, mxy, padFrac = 0.12) {
-  if (!MAP.svg) return;
-  let x0 = P.x(mnx), x1 = P.x(mxx), y0 = P.y(mxy), y1 = P.y(mny); // note lat inverts
-  let w = x1 - x0, h = y1 - y0;
-  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-  w *= (1 + padFrac * 2); h *= (1 + padFrac * 2);
-  const r = MAP.svg.getBoundingClientRect(), aspect = r.width / r.height || (P.W / P.H);
-  if (w / h < aspect) w = h * aspect; else h = w / aspect;
-  MAP.view = { x: cx - w / 2, y: cy - h / 2, w, h };
-  clampView(); applyView();
-}
+function refreshMapTheme() { if (MAP.inited) { setTiles(); drawRail(); drawStations(); } }
+function fitAll() { if (MAP.map) MAP.map.fitBounds(regionBounds(), { padding: [12, 12] }); }
 function fitToSelection() {
-  // priority: home/work points -> selected municipalities -> full
+  if (!MAP.map) return;
   const pts = [S.A, S.B].filter(Boolean);
   if (pts.length) {
-    let mnx = 1e9, mny = 1e9, mxx = -1e9, mxy = -1e9;
-    pts.forEach(p => { const rd = Math.max(p === S.A ? S.radA : S.radB, 1) / 100; mnx = Math.min(mnx, p.lon - rd * 1.6); mxx = Math.max(mxx, p.lon + rd * 1.6); mny = Math.min(mny, p.lat - rd); mxy = Math.max(mxy, p.lat + rd); });
-    fitBBox(mnx, mny, mxx, mxy); return;
+    let bnd = null;
+    pts.forEach(p => { const bb = L.latLng(p.lat, p.lon).toBounds((p === S.A ? S.radA : S.radB) * 2000); bnd = bnd ? bnd.extend(bb) : bb; });
+    MAP.map.fitBounds(bnd, { padding: [24, 24] }); return;
   }
   const sel = [...S.munis].map(s => S.geo[s]).filter(Boolean);
-  if (!sel.length || sel.length === S.meta.municipalities.length) { resetView(); return; }
-  let mnx = 1e9, mny = 1e9, mxx = -1e9, mxy = -1e9;
-  sel.forEach(g => { mnx = Math.min(mnx, g.bbox[0]); mny = Math.min(mny, g.bbox[1]); mxx = Math.max(mxx, g.bbox[2]); mxy = Math.max(mxy, g.bbox[3]); });
-  fitBBox(mnx, mny, mxx, mxy);
+  if (!sel.length || sel.length === S.meta.municipalities.length) { fitAll(); return; }
+  let a = 1e9, b = 1e9, c = -1e9, d = -1e9;
+  sel.forEach(g => { a = Math.min(a, g.bbox[1]); b = Math.min(b, g.bbox[0]); c = Math.max(c, g.bbox[3]); d = Math.max(d, g.bbox[2]); });
+  MAP.map.fitBounds([[a, b], [c, d]], { padding: [18, 18] });
 }
 
 function renderMapFacts(f) {
