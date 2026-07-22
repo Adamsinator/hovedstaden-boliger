@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hovedstaden Boliger — boligmarkedet langs S-toget</title>
+<meta name="description" content="Overblik over boligmarkedet i hovedstadsområdet — ejerlejligheder og villaer fra København til Hillerød, med fokus på nærhed til S-toget. Data fra boligsiden.dk.">
+<meta name="robots" content="noindex">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%232a78d6'/%3E%3Cpath d='M28 62 L50 30 L72 62 Z' fill='white'/%3E%3Crect x='44' y='52' width='12' height='14' fill='%232a78d6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div>
+        <h1>Hovedstaden Boliger</h1>
+        <p class="tagline">Boligmarkedet fra København til Hillerød — langs S-toget</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="updated" id="updated"></div>
+      <button class="theme-toggle" id="themeToggle" title="Skift lyst/mørkt tema" aria-label="Skift tema"></button>
+    </div>
+  </header>
+
+  <div class="controls">
+    <div class="seg" id="typeSeg" role="tablist" aria-label="Boligtype">
+      <button data-type="condo" class="active">Ejerlejligheder</button>
+      <button data-type="villa">Villaer</button>
+      <button data-type="all">Begge</button>
+    </div>
+
+    <div class="filters">
+      <label class="filter check">
+        <input type="checkbox" id="nearS"> Kun nær S-tog
+        <span class="hint" id="nearSHint"></span>
+      </label>
+      <label class="filter">
+        <span>Maks. pris</span>
+        <select id="priceMax">
+          <option value="">Alle</option>
+          <option value="2000000">2 mio.</option>
+          <option value="3000000">3 mio.</option>
+          <option value="4000000">4 mio.</option>
+          <option value="5000000">5 mio.</option>
+          <option value="7500000">7,5 mio.</option>
+          <option value="10000000">10 mio.</option>
+          <option value="15000000">15 mio.</option>
+        </select>
+      </label>
+      <label class="filter">
+        <span>Min. værelser</span>
+        <select id="rooms">
+          <option value="">Alle</option>
+          <option value="2">2+</option>
+          <option value="3">3+</option>
+          <option value="4">4+</option>
+          <option value="5">5+</option>
+        </select>
+      </label>
+      <label class="filter grow">
+        <span>Søg adresse / område</span>
+        <input type="search" id="search" placeholder="fx Holte, Østerbro, Strandvej…">
+      </label>
+    </div>
+
+    <div class="muni-chips" id="muniChips" aria-label="Kommuner"></div>
+  </div>
+
+  <section class="kpis" id="kpis" aria-label="Nøgletal"></section>
+
+  <section class="grid">
+    <div class="card map-card">
+      <div class="card-head">
+        <h2>Kort — boliger &amp; S-togsnettet</h2>
+        <div class="map-controls">
+          <label>Farvelæg efter
+            <select id="colorBy">
+              <option value="m2p">Pris pr. m²</option>
+              <option value="p">Pris</option>
+              <option value="d">Liggetid</option>
+              <option value="type">Boligtype</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="map-body">
+        <div id="map" class="map-wrap"></div>
+        <aside class="map-side">
+          <div id="mapFacts" class="map-facts"></div>
+          <div id="mapLegend" class="map-legend"></div>
+        </aside>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Median pris pr. m² efter kommune</h2></div>
+      <div id="chartMuni" class="chart"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2>S-togs­premie — pris pr. m² efter afstand til S-tog</h2>
+      </div>
+      <div id="chartDist" class="chart"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>Liggetid — hvor længe er boligerne til salg</h2></div>
+      <div id="chartDays" class="chart"></div>
+    </div>
+  </section>
+
+  <section class="card list-card">
+    <div class="card-head">
+      <h2>Boliger <span id="listCount" class="count"></span></h2>
+      <label class="filter">
+        <span>Sortér</span>
+        <select id="sort">
+          <option value="d">Nyeste (liggetid)</option>
+          <option value="m2p">Pris pr. m² (lav→høj)</option>
+          <option value="m2p_desc">Pris pr. m² (høj→lav)</option>
+          <option value="p">Pris (lav→høj)</option>
+          <option value="p_desc">Pris (høj→lav)</option>
+          <option value="sst">Nærmest S-tog</option>
+          <option value="chg">Størst prisnedsættelse</option>
+        </select>
+      </label>
+    </div>
+    <div id="cards" class="cards"></div>
+    <button id="loadMore" class="load-more" hidden>Vis flere</button>
+  </section>
+
+  <footer class="foot">
+    <p>Data hentet fra <a href="https://www.boligsiden.dk" target="_blank" rel="noopener">boligsiden.dk</a>s offentlige API og opdateres dagligt.
+    Uofficielt hobbyprojekt — ingen garanti for fuldstændighed. Priser er udbudspriser, ikke realiserede salgspriser.</p>
+  </footer>
+</div>
+
+<div id="tooltip" class="tooltip" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
