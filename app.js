@@ -387,30 +387,70 @@ function renderScatter(f) {
     const t = svel('text', { x, y: H - padB + 15, 'text-anchor': 'middle', class: 'axis-txt' });
     t.textContent = Math.round(xv) + ' m²'; svg.append(t);
   }
+  // axis titles
+  const xt = svel('text', { x: padL + plotW / 2, y: H - 2, 'text-anchor': 'middle', class: 'axis-title' });
+  xt.textContent = 'Boligstørrelse (m²)'; svg.append(xt);
+  const yt = svel('text', { x: 12, y: padT + plotH / 2, 'text-anchor': 'middle', class: 'axis-title',
+    transform: `rotate(-90 12 ${padT + plotH / 2})` });
+  yt.textContent = 'Pris pr. m²'; svg.append(yt);
+
   const gDots = svel('g', {});
   pts.forEach(r => {
     const c = svel('circle', { cx: X(r.a).toFixed(1), cy: Y(r.m2p).toFixed(1), r: 2.2,
-      fill: r.t === 'villa' ? cssVar('--villa') : cssVar('--condo'), opacity: .5 });
+      fill: r.t === 'villa' ? cssVar('--villa') : cssVar('--condo'), opacity: .45 });
     c._r = r; gDots.append(c);
   });
   svg.append(gDots);
   gDots.addEventListener('mousemove', e => {
     const t = e.target; if (t.tagName !== 'circle' || !t._r) return; const r = t._r;
-    showTip(`<div class="tt-title">${r.adr}</div><div class="tt-row"><span>${r.city}</span><b>${r.a} m²</b></div><div class="tt-row"><span>Pris/m²</span><b>${m2(r.m2p)}</b></div><div class="tt-row"><span>Pris</span><b>${krM(r.p)}</b></div>`, e.clientX, e.clientY);
+    showTip(`<div class="tt-title">${r.adr}</div><div class="tt-row"><span>${r.city}</span><b>${r.t === 'villa' ? 'Villa' : 'Ejerlejl.'}</b></div><div class="tt-row"><span>Størrelse</span><b>${r.a} m²</b></div><div class="tt-row"><span>Pris/m²</span><b>${m2(r.m2p)}</b></div><div class="tt-row"><span>Pris</span><b>${krM(r.p)}</b></div>`, e.clientX, e.clientY);
   }, true);
   gDots.addEventListener('mouseout', hideTip, true);
-  // median kr/m² per 20 m² bin — the trend line through the cloud
-  const bins = new Map();
-  pts.forEach(r => { const b = Math.floor(Math.min(r.a, xMax) / 20) * 20; (bins.get(b) || bins.set(b, []).get(b)).push(r.m2p); });
-  const line = [...bins.entries()].filter(([, v]) => v.length >= 5).sort((a, b) => a[0] - b[0])
-    .map(([b, v]) => [X(b + 10), Y(median(v))]);
-  if (line.length > 1) {
-    svg.append(svel('polyline', { points: line.map(p => p.join(',')).join(' '), fill: 'none',
-      stroke: cssVar('--ink'), 'stroke-width': 2, opacity: .75, 'stroke-linejoin': 'round' }));
-  }
+
+  // one median trend line per housing type (mixing them hides the real pattern)
+  const pearson = (xs, ys) => {
+    const n = xs.length; if (n < 3) return null;
+    const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+    let cov = 0, vx = 0, vy = 0;
+    for (let i = 0; i < n; i++) { const dx = xs[i] - mx, dy = ys[i] - my; cov += dx * dy; vx += dx * dx; vy += dy * dy; }
+    return (vx && vy) ? cov / Math.sqrt(vx * vy) : null;
+  };
+  const BIN = 25, stats = [];
+  ['condo', 'villa'].forEach(t => {
+    const rows = pts.filter(r => r.t === t);
+    if (rows.length < 25) return;
+    const color = cssVar(t === 'villa' ? '--villa' : '--condo');
+    const bins = new Map();
+    rows.forEach(r => { const b = Math.floor(Math.min(r.a, xMax) / BIN) * BIN; (bins.get(b) || bins.set(b, []).get(b)).push(r.m2p); });
+    const line = [...bins.entries()].filter(([, v]) => v.length >= 10).sort((a, b) => a[0] - b[0])
+      .map(([b, v]) => [X(b + BIN / 2), Y(median(v))]);
+    if (line.length > 1) {
+      svg.append(svel('polyline', { points: line.map(p => p.join(',')).join(' '), fill: 'none',
+        stroke: cssVar('--surface'), 'stroke-width': 4.5, opacity: .9, 'stroke-linejoin': 'round' }));
+      svg.append(svel('polyline', { points: line.map(p => p.join(',')).join(' '), fill: 'none',
+        stroke: color, 'stroke-width': 2.4, 'stroke-linejoin': 'round' }));
+    }
+    stats.push({ t, color, n: rows.length, r: pearson(rows.map(x => x.a), rows.map(x => x.m2p)) });
+  });
   mount.append(svg);
+
+  // legend — makes clear these are current listings split by housing type
+  const lg = el('div', { class: 'chart-legend' });
+  stats.forEach(s => lg.append(el('span', { class: 'legend-item' },
+    el('span', { class: 'swatch', style: `background:${s.color}` }),
+    `${s.t === 'villa' ? 'Villa' : 'Ejerlejlighed'} (${s.n.toLocaleString('da-DK')}) — linje = median pr. ${BIN} m²`)));
+  mount.append(lg);
+
+  // caption describing what the data actually shows, not what we expect it to
+  const dir = r => r == null ? null : (r > 0.08 ? 'stiger' : r < -0.08 ? 'falder' : 'er nogenlunde flad');
+  const bits = stats.filter(s => s.r != null).map(s =>
+    `${s.t === 'villa' ? 'villaer' : 'ejerlejligheder'} ${dir(s.r)} (r = ${s.r.toFixed(2).replace('.', ',')})`);
   mount.append(el('p', { class: 'chart-note' },
-    'Hver prik er en bolig. Den mørke linje er median pris pr. m² pr. 20 m²-interval — den falder typisk med størrelsen (stordriftsrabat).'));
+    'Hver prik er en bolig til salg lige nu — ikke en tidsserie. '
+    + (bits.length ? `I det valgte udsnit: ${bits.join(', ')}. ` : '')
+    + (stats.length > 1
+      ? 'Den samlede sky kan se flad ud, selvom hver boligtype for sig stiger: store boliger er oftere villaer, som har lavere m²-pris end lejligheder (sammensætningseffekt).'
+      : '')));
 }
 
 /* ============ outliers: robust z-score of kr/m² within kommune + type ============ */
