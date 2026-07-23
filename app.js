@@ -9,7 +9,7 @@ const S = {
   hasBasement: false, hasElevator: false, hasBalcony: false,
   search: '', colorBy: 'm2p', sort: 'd', shown: 60,
   A: null, B: null, radA: 3, radB: 3,   // home/work points {name,lat,lon}
-  dstArea: '01',
+  dstArea: '01', indexMode: 'krm2', bvc: null,
 };
 const $ = (s, r = document) => r.querySelector(s);
 const el = (t, a = {}, ...kids) => {
@@ -41,14 +41,15 @@ const PRICES = [1e6, 1.5e6, 2e6, 2.5e6, 3e6, 4e6, 5e6, 7.5e6, 10e6, 15e6, 20e6, 
 /* ===================== load ===================== */
 async function boot() {
   try {
-    const [meta, listings, geo, index, history] = await Promise.all([
+    const [meta, listings, geo, index, history, bvc] = await Promise.all([
       fetch('data/meta.json').then(r => r.json()),
       fetch('data/listings.json').then(r => r.json()),
       fetch('data/geo.json').then(r => r.json()).catch(() => ({})),
       fetch('data/priceindex.json').then(r => r.json()).catch(() => null),
       fetch('data/history.json').then(r => r.json()).catch(() => ({ series: [] })),
+      fetch('data/bvc.json').then(r => r.json()).catch(() => null),
     ]);
-    S.meta = meta; S.all = listings; S.geo = geo; S.index = index; S.history = history;
+    S.meta = meta; S.all = listings; S.geo = geo; S.index = index; S.history = history; S.bvc = bvc;
     meta.municipalities.forEach(m => S.munis.add(m.slug));
     initUI();
     initMap();
@@ -116,6 +117,13 @@ function initUI() {
     sel.value = S.dstArea;
     sel.addEventListener('change', e => { S.dstArea = e.target.value; renderIndexChart(); });
   }
+  const modeSel = $('#indexMode');
+  if (!S.bvc) modeSel.querySelector('option[value="real"]').remove();
+  modeSel.addEventListener('change', e => {
+    S.indexMode = e.target.value;
+    $('#dstAreaLabel').style.display = S.indexMode === 'real' ? 'none' : '';
+    renderIndexChart();
+  });
   $('#trendMetric').addEventListener('change', renderTrendChart);
 
   // (map pan / zoom / double-click zoom is native Leaflet)
@@ -390,7 +398,9 @@ function currentKrM2(areaId, type) {
   return median(S.all.filter(r => r.t === type && set.has(r.muni)).map(r => r.m2p).filter(Boolean));
 }
 function renderIndexChart() {
-  const mount = $('#chartIndex'); if (!S.index) { mount.innerHTML = ''; return; }
+  const mount = $('#chartIndex');
+  if (S.indexMode === 'real' && S.bvc) return renderRealIndexChart(mount);
+  if (!S.index) { mount.innerHTML = ''; return; }
   const q = S.index.quarters, area = S.dstArea;
   const xticks = [];
   q.forEach((qq, i) => { if (qq.endsWith('K1') && (+qq.slice(0, 4)) % 4 === 0) xticks.push([i, qq.slice(0, 4)]); });
@@ -412,6 +422,32 @@ function renderIndexChart() {
     `Estimeret kr/m² for ${areaName}: Danmarks Statistiks kvartalsvise prisindeks (EJ56) skaleret, så seneste kvartal svarer til det aktuelle medianniveau. Viser prisernes bevægelse siden 1992, ikke faktiske historiske udbudspriser.`));
 }
 const m2short = v => v == null ? '–' : Math.round(v / 1000) + 'k';
+
+// Long real (inflation-adjusted) prices, Boligøkonomisk Videncenter.
+// Houses run from 1938, condos from 1973 — rebased to 2000 = 100 so the two are
+// directly comparable on one axis.
+function renderRealIndexChart(mount) {
+  const b = S.bvc, hy = b.houses.years, cy = b.condos.years, BASE = 2000;
+  const rebase = (vals, yrs) => {
+    const i = yrs.indexOf(BASE), f = (i >= 0 && vals[i]) ? 100 / vals[i] : 1;
+    return vals.map(v => v == null ? null : Math.round(v * f * 10) / 10);
+  };
+  const houses = rebase(b.houses.kbhfrb, hy);
+  const condosR = rebase(b.condos.kbhfrb, cy);
+  const condos = hy.map(y => { const i = cy.indexOf(y); return i < 0 ? null : condosR[i]; });
+  const series = [];
+  if (S.type !== 'condo') series.push({ name: 'Villa/hus (realt)', color: cssVar('--villa'), values: houses });
+  if (S.type !== 'villa') series.push({ name: 'Ejerlejlighed (realt)', color: cssVar('--condo'), values: condos });
+  const xticks = [];
+  hy.forEach((y, i) => { if (y % 10 === 0) xticks.push([i, String(y)]); });
+  lineChart(mount, hy.map(String), series, {
+    xticks, legend: true, yfmt: v => Math.round(v), tfmt: v => v == null ? '–' : Math.round(v),
+  });
+  mount.append(el('p', { class: 'chart-note' },
+    `Reale (inflationskorrigerede) boligpriser i København + Frederiksberg, indekseret så ${BASE} = 100. `
+    + 'Huse måles fra 1938, ejerlejligheder fra 1973. Viser prisernes købekraft-korrigerede udvikling — '
+    + 'toppen før finanskrisen og faldet efter er tydelige. Kilde: Boligøkonomisk Videncenter.'));
+}
 
 function renderTrendChart() {
   const mount = $('#chartTrend'); const hist = (S.history && S.history.series) || [];

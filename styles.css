@@ -136,6 +136,7 @@ a { color: var(--condo); }
 .rad input[type=range] { flex:1; accent-color:var(--condo); }
 .rad b { color:var(--ink); }
 
+.chart-controls { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
 .chart-controls label, .card-head .chart-controls label { font-size:12px; color:var(--muted); display:flex; gap:6px; align-items:center; }
 .chart-controls select { font:inherit; font-size:13px; color:var(--ink); background:var(--surface);
   border:1px solid var(--border); border-radius:8px; padding:5px 8px; }

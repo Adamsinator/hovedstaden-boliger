@@ -340,6 +340,72 @@ def fetch_dst_index():
 
 
 # ---------------------------------------------------------------------------
+# Long real (inflation-adjusted) price index — Boligøkonomisk Videncenter.
+# Houses back to 1938, condos back to 1973, for the Copenhagen area.
+# ---------------------------------------------------------------------------
+BVC_URL = "https://bvc.dk/media/scfgcxa2/bvc-boligprisindeks.xlsx"
+
+
+def fetch_bvc():
+    import io
+    try:
+        import openpyxl
+    except ImportError:
+        print("    BVC skipped (openpyxl not installed)", file=sys.stderr)
+        return None
+    try:
+        req = urllib.request.Request(BVC_URL, headers={"User-Agent": "hovedstaden-boliger/1.0"})
+        raw = urllib.request.urlopen(req, timeout=60).read()
+        wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    except Exception as e:
+        print(f"    BVC fetch failed: {e}", file=sys.stderr)
+        return None
+
+    def col_by_prefix(header, prefix):
+        for i, c in enumerate(header):
+            if c and str(c).startswith(prefix):
+                return i
+        return None
+
+    def annual(sheet, cols):
+        ws = wb[sheet]
+        rows = list(ws.iter_rows(values_only=True))
+        header = rows[0]
+        idx = {alias: col_by_prefix(header, pref) for pref, alias in cols.items()}
+        by_year = {}
+        for r in rows[1:]:
+            if r[0] is None:
+                continue
+            try:
+                y = int(float(r[0]))
+            except (TypeError, ValueError):
+                continue
+            by_year[y] = {alias: (r[i] if i is not None else None) for alias, i in idx.items()}
+        years = sorted(by_year)
+        out = {"years": years}
+        for alias in cols.values():
+            out[alias] = [round(float(by_year[y][alias]), 1) if by_year[y][alias] is not None else None
+                          for y in years]
+        return out
+
+    try:
+        houses = annual("(C) Enfam.huse fra 1938 (realt)",
+                        {"København+Frederiksberg": "kbhfrb", "Hele landet": "hele"})
+        condos = annual("(E) Ejerlejl. fra 1973 (realt)",
+                        {"KBH+FRB": "kbhfrb", "Hele landet": "hele"})
+    except Exception as e:
+        print(f"    BVC parse failed: {e}", file=sys.stderr)
+        return None
+    print(f"    BVC: houses {houses['years'][0]}–{houses['years'][-1]}, "
+          f"condos {condos['years'][0]}–{condos['years'][-1]}")
+    return {
+        "source": "Boligøkonomisk Videncenter",
+        "note": "Reale (inflationskorrigerede) prisindeks for København+Frederiksberg.",
+        "houses": houses, "condos": condos,
+    }
+
+
+# ---------------------------------------------------------------------------
 # History accumulation — a dated snapshot per (scope, type) appended each run
 # ---------------------------------------------------------------------------
 def snapshot(listings, date_str):
@@ -437,6 +503,12 @@ def main():
     if dst:
         with open(os.path.join(data_dir, "priceindex.json"), "w", encoding="utf-8") as f:
             json.dump(dst, f, ensure_ascii=False, separators=(",", ":"))
+
+    print("Fetching Boligøkonomisk Videncenter long real index…")
+    bvc = fetch_bvc()
+    if bvc:
+        with open(os.path.join(data_dir, "bvc.json"), "w", encoding="utf-8") as f:
+            json.dump(bvc, f, ensure_ascii=False, separators=(",", ":"))
 
     meta = {
         "generatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

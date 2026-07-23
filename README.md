@@ -17,8 +17,13 @@ Live: https://adamsinator.github.io/hovedstaden-boliger/
 - **Find a home between two addresses**: type your home and work addresses and a
   radius for each — the map draws the circles and only shows listings within reach
   of both, with per-listing distances.
-- **Prisudvikling**: the real quarterly property-price index back to 1992
-  (Danmarks Statistik EJ56), house vs condo, for the corridor's landsdele.
+- **Prisudvikling**, in two modes:
+  - **kr/m² (1992–)** — Danmarks Statistik's quarterly price index (EJ56) scaled so
+    the latest quarter equals today's actual median kr/m², so the axis reads in real
+    kroner instead of an abstract index.
+  - **Reale priser (1938–)** — Boligøkonomisk Videncenter's inflation-adjusted index
+    for København+Frederiksberg (houses from 1938, condos from 1973), rebased to
+    2000 = 100. Shows the 2006 bubble peak and the 2012 trough in real terms.
 - **Marked over tid**: median kr/m², liggetid and price-cut share tracked from the
   daily snapshots (builds up over time).
 - The **S-train premium**: median kr/m² by distance to the nearest S-train;
@@ -41,6 +46,8 @@ runs `scripts/build_data.py` once a day, which:
   `data/geo.json`;
 - fetches the property-price index (table EJ56) from Danmarks Statistik →
   `data/priceindex.json`;
+- fetches Boligøkonomisk Videncenter's long real-price spreadsheet and extracts the
+  1938– / 1973– inflation-adjusted series → `data/bvc.json`;
 - appends a dated aggregate snapshot per (type, kommune) → `data/history.json`;
 - writes `data/meta.json` (counts, municipality names, station geometry).
 

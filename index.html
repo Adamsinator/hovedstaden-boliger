@@ -124,7 +124,13 @@
       <div class="card-head">
         <h2>Prisudvikling i kr/m² <span class="src">· estimeret ud fra Danmarks Statistik, 1992–</span></h2>
         <div class="chart-controls">
-          <label>Område
+          <label>Vis
+            <select id="indexMode">
+              <option value="krm2">Kr/m² · 1992–</option>
+              <option value="real">Reale priser · 1938–</option>
+            </select>
+          </label>
+          <label id="dstAreaLabel">Område
             <select id="dstArea"></select>
           </label>
         </div>
