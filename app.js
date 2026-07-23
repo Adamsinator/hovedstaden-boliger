@@ -108,6 +108,7 @@ function initUI() {
   on('#floorMin', 'floorMin', 1); on('#yearMin', 'yearMin', 1); on('#daysMax', 'daysMax', 1);
   on('#energyMin', 'energyMin'); on('#hasBasement', 'hasBasement'); on('#hasElevator', 'hasElevator');
   on('#hasBalcony', 'hasBalcony'); on('#colorBy', 'colorBy'); on('#sort', 'sort');
+  on('#nearS', 'nearS');
   $('#search').addEventListener('input', e => { S.search = e.target.value.toLowerCase().trim(); S.shown = 60; render(); });
   $('#loadMore').addEventListener('click', () => { S.shown += 60; renderCards(filtered()); });
   $('#resetFilters').addEventListener('click', resetFilters);
