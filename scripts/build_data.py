@@ -14,7 +14,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from stations import STATIONS, LINES, LINE_LABELS  # noqa: E402
@@ -493,6 +493,66 @@ def merge_history(data_dir, new_rows, date_str, keep_days=3660):   # ~10 years
     return len({r["date"] for r in series})
 
 
+# Per-listing change log — follow individual homes over time: price trajectory,
+# first/last seen, and when a listing disappears (sold or withdrawn). Written to
+# data/tracker.json. Removed listings are kept keep_removed_days (so recently
+# sold homes stay visible) then pruned so the file doesn't grow without bound.
+def track_listings(data_dir, listings, today, keep_removed_days=365):
+    path = os.path.join(data_dir, "tracker.json")
+    items = {}
+    if os.path.exists(path):
+        try:
+            items = json.load(open(path, encoding="utf-8")).get("items", {})
+        except Exception:
+            items = {}
+
+    cur = set()
+    for r in listings:
+        cid = r.get("id")
+        if cid is None:
+            continue
+        cid = str(cid)
+        cur.add(cid)
+        p, m2, d = r.get("p"), r.get("m2p"), r.get("d")
+        it = items.get(cid)
+        if it is None:
+            items[cid] = {
+                "adr": r.get("adr"), "muni": r.get("muni"), "t": r.get("t"),
+                "a": r.get("a"), "r": r.get("r"), "zip": r.get("zip"),
+                "near": r.get("near"), "url": r.get("url"),
+                "firstSeen": today, "lastSeen": today, "lastD": d, "removed": None,
+                "events": [[today, p, m2]],
+            }
+        else:
+            it["lastSeen"] = today
+            it["lastD"] = d
+            it["removed"] = None                       # still live (or reappeared)
+            it["url"] = r.get("url") or it.get("url")
+            ev = it.get("events") or []
+            if not ev or ev[-1][1] != p:               # log only actual price moves
+                ev.append([today, p, m2])
+            it["events"] = ev
+
+    for cid, it in items.items():                      # anything gone as of today
+        if cid not in cur and it.get("removed") is None:
+            it["removed"] = today
+
+    cutoff = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=keep_removed_days)).strftime("%Y-%m-%d")
+    items = {cid: it for cid, it in items.items()
+             if it.get("removed") is None or it["removed"] >= cutoff}
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({
+            "generatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "count": len(items),
+            "items": items,
+        }, f, ensure_ascii=False, separators=(",", ":"))
+
+    live = sum(1 for it in items.values() if it.get("removed") is None)
+    changed = sum(1 for it in items.values() if len(it.get("events") or []) > 1)
+    return {"tracked": len(items), "live": live, "withChanges": changed}
+
+
 def main():
     out = []
     counts = {"condo": 0, "villa": 0}
@@ -524,6 +584,7 @@ def main():
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     ndates = merge_history(data_dir, snapshot(listings, today), today)
+    track = track_listings(data_dir, listings, today)
 
     print("Fetching Danmarks Statistik price index (EJ56)…")
     dst = fetch_dst_index()
@@ -557,7 +618,8 @@ def main():
         json.dump(meta, f, ensure_ascii=False, separators=(",", ":"))
 
     print(f"\nWrote {len(listings)} listings (condo={counts['condo']}, "
-          f"villa={counts['villa']}), {len(geo)} boundaries, {ndates} history date(s).")
+          f"villa={counts['villa']}), {len(geo)} boundaries, {ndates} history date(s), "
+          f"{track['tracked']} tracked ({track['live']} live, {track['withChanges']} with price changes).")
 
 
 if __name__ == "__main__":

@@ -48,7 +48,11 @@ runs `scripts/build_data.py` once a day, which:
   `data/priceindex.json`;
 - fetches Boligøkonomisk Videncenter's long real-price spreadsheet and extracts the
   1938– / 1973– inflation-adjusted series → `data/bvc.json`;
-- appends a dated aggregate snapshot per (type, kommune) → `data/history.json`;
+- appends a dated aggregate snapshot per (type, kommune) — medians, quartiles and
+  the S-tog premium → `data/history.json` (kept ~10 years);
+- updates a per-listing change log — each home's asking-price trajectory, plus
+  when it was first seen and when it disappeared (sold/withdrawn) →
+  `data/tracker.json` (removed listings kept ~1 year, then pruned);
 - writes `data/meta.json` (counts, municipality names, station geometry).
 
 The static front-end (`index.html`, `styles.css`, `app.js`) loads those files and

@@ -7,7 +7,7 @@ const S = {
   priceMin: null, priceMax: null, rooms: null, areaMin: null, areaMax: null,
   lotMin: null, floorMin: null, yearMin: null, daysMax: null, energyMin: null,
   hasBasement: false, hasElevator: false, hasBalcony: false,
-  search: '', colorBy: 'm2p', sort: 'd', shown: 60, showRail: true,
+  search: '', colorBy: 'm2p', sort: 'd', shown: 60, showRail: true, trackerMap: null,
   A: null, B: null, radA: 3, radB: 3,   // home/work points {name,lat,lon}
   dstArea: '01', indexMode: 'krm2', bvc: null,
 };
@@ -56,6 +56,7 @@ async function boot() {
     initUI();
     initMap();
     render();
+    loadTracker();
   } catch (e) {
     $('#map').innerHTML = '<div class="loading">Kunne ikke hente data.</div>';
     console.error(e);
@@ -892,6 +893,27 @@ function sortRows(f) {
   const cmp = { d: (a, b) => a.d - b.d, m2p: (a, b) => a.m2p - b.m2p, m2p_desc: (a, b) => b.m2p - a.m2p, p: (a, b) => a.p - b.p, p_desc: (a, b) => b.p - a.p, sst: (a, b) => a.sst - b.sst, chg: (a, b) => (a.chg || 0) - (b.chg || 0) }[S.sort];
   return [...f].sort(cmp);
 }
+// Per-listing change log (data/tracker.json) — loaded lazily after first paint
+// so it never blocks the initial render; cards refresh once it arrives.
+function loadTracker() {
+  fetch('data/tracker.json').then(r => r.json()).then(t => {
+    S.trackerMap = new Map(Object.entries(t.items || {}));
+    renderCards(filtered());
+  }).catch(() => {});
+}
+const MONTHS_DA = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+function fmtDay(iso) { if (!iso) return ''; const [, m, d] = iso.split('-'); return `${+d}. ${MONTHS_DA[+m - 1]}`; }
+// tiny inline sparkline of a listing's observed asking prices
+function priceSpark(events) {
+  const ps = events.map(e => e[1]).filter(v => v != null);
+  if (ps.length < 2) return null;
+  const w = 56, h = 16, min = Math.min(...ps), max = Math.max(...ps), rng = (max - min) || 1, step = w / (ps.length - 1);
+  const pts = ps.map((v, i) => `${(i * step).toFixed(1)},${(h - 2 - (v - min) / rng * (h - 4)).toFixed(1)}`).join(' ');
+  const svg = svel('svg', { viewBox: `0 0 ${w} ${h}`, class: 'spark', width: w, height: h, 'aria-hidden': 'true' });
+  svg.append(svel('polyline', { points: pts, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.6, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+  return svg;
+}
+
 function renderCards(f) {
   const rows = sortRows(f);
   $('#listCount').textContent = '· ' + f.length.toLocaleString('da-DK');
@@ -923,7 +945,20 @@ function card(r) {
     if (S.B) parts.push('💼 ' + haversine(r.lat, r.lon, S.B.lat, S.B.lon).toLocaleString('da-DK', { maximumFractionDigits: 1 }) + ' km');
     meta.append(el('span', { class: 'commute-dist' }, parts.join(' · ')));
   }
-  body.append(meta); a.append(body);
+  body.append(meta);
+  // observed price trajectory since we started following this listing
+  const tk = S.trackerMap && S.trackerMap.get(String(r.id));
+  if (tk && tk.events && tk.events.length >= 2) {
+    const first = tk.events[0][1], last = tk.events[tk.events.length - 1][1];
+    const delta = (last || 0) - (first || 0);
+    const ph = el('div', { class: 'phist ' + (delta < 0 ? 'down' : delta > 0 ? 'up' : 'flat') });
+    const spark = priceSpark(tk.events); if (spark) ph.append(spark);
+    const arrow = delta < 0 ? '↘' : delta > 0 ? '↗' : '→';
+    const txt = delta === 0 ? 'uændret' : (delta < 0 ? '−' : '+') + Math.abs(delta).toLocaleString('da-DK') + ' kr';
+    ph.append(el('span', { class: 'ph-txt' }, `${arrow} ${txt} siden ${fmtDay(tk.firstSeen)}`));
+    body.append(ph);
+  }
+  a.append(body);
   return a;
 }
 

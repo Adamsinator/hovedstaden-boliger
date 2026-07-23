@@ -39,7 +39,8 @@ python3 scripts/build_data.py
 | `geo.json` | Dataforsyningen `/kommuner/{kode}?format=geojson` | kommune boundaries |
 | `priceindex.json` | Danmarks Statistik table **EJ56** (JSONSTAT) | quarterly index from 1992 |
 | `bvc.json` | Boligøkonomisk Videncenter `.xlsx` | real (inflation-adj.) index from 1938 |
-| `history.json` | our own daily snapshots | accumulates; not back-fillable |
+| `history.json` | our own daily snapshots | aggregate per (kommune,type): medians, quartiles, S-tog premium; ~10y; not back-fillable |
+| `tracker.json` | our own per-listing change log | each home's price trajectory + first/last seen + sold/withdrawn date; removed kept ~1y then pruned |
 
 Address autocomplete (home/work feature) calls Dataforsyningen DAWA directly
 from the browser — it sends `access-control-allow-origin: *`.
