@@ -29,6 +29,8 @@ const num = n => n == null ? '–' : Math.round(n).toLocaleString('da-DK');
 const median = arr => { if (!arr.length) return null; const a = [...arr].sort((x, y) => x - y); const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
 const quantile = (arr, q) => { if (!arr.length) return null; const a = [...arr].sort((x, y) => x - y); const p = (a.length - 1) * q, lo = Math.floor(p); return a[lo] + (a[lo + 1] - a[lo] || 0) * (p - lo); };
 const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+// one colour per entity: ejerlejlighed = blue, villa = orange (blue when both)
+const typeColor = () => cssVar(S.type === 'villa' ? '--villa' : '--condo');
 const haversine = (la1, lo1, la2, lo2) => {
   const R = 6371, p = Math.PI / 180;
   const a = 0.5 - Math.cos((la2 - la1) * p) / 2 + Math.cos(la1 * p) * Math.cos(la2 * p) * (1 - Math.cos((lo2 - lo1) * p)) / 2;
@@ -125,6 +127,7 @@ function initUI() {
     renderIndexChart();
   });
   $('#trendMetric').addEventListener('change', renderTrendChart);
+  $('#outlierSide').addEventListener('change', () => renderOutliers(filtered()));
 
   // (map pan / zoom / double-click zoom is native Leaflet)
 
@@ -242,6 +245,9 @@ function render() {
   renderMuniChart(f);
   renderDistChart(f);
   renderDaysChart(f);
+  renderYearChart(f);
+  renderScatter(f);
+  renderOutliers(f);
   renderIndexChart();
   renderTrendChart();
   drawMap(f);
@@ -258,7 +264,8 @@ function renderKPIs(f) {
   const typeLabel = S.type === 'all' ? 'ejerl. + villaer' : (S.type === 'condo' ? 'ejerlejligheder' : 'villaer');
   const kpis = [
     { label: 'Boliger til salg', val: f.length.toLocaleString('da-DK'), sub: typeLabel },
-    { label: 'Median pris', val: krM(median(prices)), sub: prices.length ? kr(quantile(prices, .25)) + ' – ' + kr(quantile(prices, .75)) : '' },
+    { label: 'Median pris', val: krM(median(prices)),
+      sub: prices.length ? `Midterste 50 %: ${krM(quantile(prices, .25))} – ${krM(quantile(prices, .75))} · dyreste ${krM(Math.max(...prices))}` : '' },
     { label: 'Median pris/m²', val: m2(median(m2p)), sub: 'typisk kvadratmeterpris' },
     { label: 'Median liggetid', val: median(days) != null ? Math.round(median(days)) + ' <small>dage</small>' : '–', sub: 'til salg på boligsiden', html: true },
     { label: 'Med prisnedsættelse', val: cutPct + ' <small>%</small>', sub: nearPct + ' % ligger nær S-tog', html: true },
@@ -293,7 +300,7 @@ function hbars(mount, rows, opt = {}) {
     const y = padT + i * rowH, bw = Math.max(2, r.value / max * plotW);
     const g = svel('g', { class: 'bar-row' });
     const lbl = svel('text', { x: padL - 8, y: y + rowH / 2 + 4, 'text-anchor': 'end', class: 'bar-lbl' }); lbl.textContent = r.label; g.append(lbl);
-    g.append(svel('rect', { x: padL, y: y + 4, width: bw, height: rowH - 10, rx: 4, fill: r.color || cssVar('--condo') }));
+    g.append(svel('rect', { x: padL, y: y + 4, width: bw, height: rowH - 10, rx: 4, fill: r.color || typeColor() }));
     const val = svel('text', { x: padL + bw + 7, y: y + rowH / 2 + 4, class: 'bar-val' }); val.textContent = opt.fmt ? opt.fmt(r.value) : num(r.value); g.append(val);
     g.addEventListener('mousemove', e => showTip(`<div class="tt-title">${r.label}</div><div class="tt-row"><span>${opt.vlabel || 'Værdi'}</span><b>${opt.fmt ? opt.fmt(r.value) : num(r.value)}</b></div>${r.n != null ? `<div class="tt-row"><span>Antal boliger</span><b>${r.n}</b></div>` : ''}`, e.clientX, e.clientY));
     g.addEventListener('mouseleave', hideTip);
@@ -306,7 +313,7 @@ function renderMuniChart(f) {
   const byM = new Map();
   f.forEach(r => { (byM.get(r.muni) || byM.set(r.muni, []).get(r.muni)).push(r.m2p); });
   const names = Object.fromEntries(S.meta.municipalities.map(m => [m.slug, m.name]));
-  const rows = [...byM.entries()].map(([slug, arr]) => ({ label: names[slug] || slug, value: Math.round(median(arr.filter(Boolean))), n: arr.length, color: cssVar('--condo') }))
+  const rows = [...byM.entries()].map(([slug, arr]) => ({ label: names[slug] || slug, value: Math.round(median(arr.filter(Boolean))), n: arr.length, color: typeColor() }))
     .filter(r => r.value).sort((a, b) => b.value - a.value);
   hbars($('#chartMuni'), rows, { fmt: m2, vlabel: 'Median pris/m²' });
 }
@@ -315,7 +322,7 @@ function renderDistChart(f) {
   const buckets = [['0–500 m', 0, 500], ['500 m–1 km', 500, 1000], ['1–2 km', 1000, 2000], ['2–4 km', 2000, 4000], ['over 4 km', 4000, Infinity]];
   const rows = buckets.map(([label, lo, hi]) => {
     const arr = f.filter(r => r.sst >= lo && r.sst < hi).map(r => r.m2p).filter(Boolean);
-    return { label, value: Math.round(median(arr) || 0), n: arr.length, color: cssVar('--condo') };
+    return { label, value: Math.round(median(arr) || 0), n: arr.length, color: typeColor() };
   }).filter(r => r.n);
   hbars($('#chartDist'), rows, { fmt: m2, vlabel: 'Median pris/m²' });
 }
@@ -335,13 +342,114 @@ function renderDaysChart(f) {
   const bw = plotW / counts.length;
   counts.forEach((c, i) => {
     const h = c / max * plotH, x = padL + i * bw, y = padT + plotH - h;
-    const g = svel('g'); g.append(svel('rect', { x: x + bw * .14, y, width: bw * .72, height: h, rx: 4, fill: cssVar('--condo') }));
+    const g = svel('g'); g.append(svel('rect', { x: x + bw * .14, y, width: bw * .72, height: h, rx: 4, fill: typeColor() }));
     g.addEventListener('mousemove', e => showTip(`<div class="tt-title">${labels[i]}</div><div class="tt-row"><span>Boliger</span><b>${c}</b></div><div class="tt-row"><span>Andel</span><b>${Math.round(c / days.length * 100)} %</b></div>`, e.clientX, e.clientY));
     g.addEventListener('mouseleave', hideTip);
     svg.append(g);
     const lt = svel('text', { x: x + bw / 2, y: H - padB + 15, 'text-anchor': 'middle', class: 'axis-txt' }); lt.textContent = labels[i]; lt.setAttribute('transform', `rotate(-30 ${x + bw / 2} ${H - padB + 15})`); svg.append(lt);
   });
   mount.append(svg);
+}
+
+/* ===================== price by build year ===================== */
+function renderYearChart(f) {
+  const buckets = [['før 1900', -1e9, 1900], ['1900–39', 1900, 1940], ['1940–59', 1940, 1960],
+    ['1960–79', 1960, 1980], ['1980–99', 1980, 2000], ['2000–09', 2000, 2010],
+    ['2010–19', 2010, 2020], ['2020+', 2020, 1e9]];
+  const rows = buckets.map(([label, lo, hi]) => {
+    const arr = f.filter(r => r.y && r.y >= lo && r.y < hi).map(r => r.m2p).filter(Boolean);
+    return { label, value: Math.round(median(arr) || 0), n: arr.length, color: typeColor() };
+  }).filter(r => r.n >= 5);
+  hbars($('#chartYear'), rows, { fmt: m2, vlabel: 'Median pris/m²' });
+}
+
+/* ===================== scatter: size vs kr/m² ===================== */
+function renderScatter(f) {
+  const mount = $('#chartScatter'); mount.innerHTML = '';
+  const pts = f.filter(r => r.a > 0 && r.m2p > 0);
+  if (pts.length < 5) { mount.append(el('div', { class: 'loading' }, 'For få boliger.')); return; }
+  const W = 640, H = 300, padL = 52, padR = 12, padT = 10, padB = 34;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const xMax = Math.min(320, quantile(pts.map(r => r.a), .99));
+  const yMax = quantile(pts.map(r => r.m2p), .99);
+  const X = v => padL + Math.min(v, xMax) / xMax * plotW;
+  const Y = v => padT + plotH - Math.min(v, yMax) / yMax * plotH;
+  const svg = svel('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img' });
+  for (let g = 0; g <= 4; g++) {
+    const yv = yMax * g / 4, y = Y(yv);
+    svg.append(svel('line', { x1: padL, y1: y, x2: W - padR, y2: y, class: 'gridline' }));
+    const t = svel('text', { x: padL - 6, y: y + 3, 'text-anchor': 'end', class: 'axis-txt' });
+    t.textContent = Math.round(yv / 1000) + 'k'; svg.append(t);
+  }
+  for (let g = 0; g <= 4; g++) {
+    const xv = xMax * g / 4, x = X(xv);
+    const t = svel('text', { x, y: H - padB + 15, 'text-anchor': 'middle', class: 'axis-txt' });
+    t.textContent = Math.round(xv) + ' m²'; svg.append(t);
+  }
+  const gDots = svel('g', {});
+  pts.forEach(r => {
+    const c = svel('circle', { cx: X(r.a).toFixed(1), cy: Y(r.m2p).toFixed(1), r: 2.2,
+      fill: r.t === 'villa' ? cssVar('--villa') : cssVar('--condo'), opacity: .5 });
+    c._r = r; gDots.append(c);
+  });
+  svg.append(gDots);
+  gDots.addEventListener('mousemove', e => {
+    const t = e.target; if (t.tagName !== 'circle' || !t._r) return; const r = t._r;
+    showTip(`<div class="tt-title">${r.adr}</div><div class="tt-row"><span>${r.city}</span><b>${r.a} m²</b></div><div class="tt-row"><span>Pris/m²</span><b>${m2(r.m2p)}</b></div><div class="tt-row"><span>Pris</span><b>${krM(r.p)}</b></div>`, e.clientX, e.clientY);
+  }, true);
+  gDots.addEventListener('mouseout', hideTip, true);
+  // median kr/m² per 20 m² bin — the trend line through the cloud
+  const bins = new Map();
+  pts.forEach(r => { const b = Math.floor(Math.min(r.a, xMax) / 20) * 20; (bins.get(b) || bins.set(b, []).get(b)).push(r.m2p); });
+  const line = [...bins.entries()].filter(([, v]) => v.length >= 5).sort((a, b) => a[0] - b[0])
+    .map(([b, v]) => [X(b + 10), Y(median(v))]);
+  if (line.length > 1) {
+    svg.append(svel('polyline', { points: line.map(p => p.join(',')).join(' '), fill: 'none',
+      stroke: cssVar('--ink'), 'stroke-width': 2, opacity: .75, 'stroke-linejoin': 'round' }));
+  }
+  mount.append(svg);
+  mount.append(el('p', { class: 'chart-note' },
+    'Hver prik er en bolig. Den mørke linje er median pris pr. m² pr. 20 m²-interval — den falder typisk med størrelsen (stordriftsrabat).'));
+}
+
+/* ============ outliers: robust z-score of kr/m² within kommune + type ============ */
+function outlierRows(f) {
+  const groups = new Map();
+  f.forEach(r => { if (!r.m2p) return; const k = r.muni + '|' + r.t; (groups.get(k) || groups.set(k, []).get(k)).push(r); });
+  const out = [];
+  groups.forEach(rows => {
+    if (rows.length < 8) return;                       // too small to judge
+    const vals = rows.map(r => r.m2p);
+    const med = median(vals);
+    const mad = median(vals.map(v => Math.abs(v - med)));
+    const sigma = 1.4826 * mad;                        // robust ≈ std-dev
+    if (!sigma) return;
+    rows.forEach(r => out.push({ r, z: (r.m2p - med) / sigma, med }));
+  });
+  return out;
+}
+function renderOutliers(f) {
+  const box = $('#outliers'); box.innerHTML = '';
+  const side = $('#outlierSide').value;
+  const all = outlierRows(f);
+  if (!all.length) { box.append(el('div', { class: 'loading' }, 'For få boliger i hvert område til at beregne afvigelser.')); return; }
+  const sorted = all.sort((a, b) => side === 'low' ? a.z - b.z : b.z - a.z).slice(0, 12);
+  const names = Object.fromEntries(S.meta.municipalities.map(m => [m.slug, m.name]));
+  sorted.forEach(({ r, z, med }) => {
+    const pct = Math.round((r.m2p / med - 1) * 100);
+    const a = el('a', { class: 'ol-row', href: r.url || '#', target: '_blank', rel: 'noopener' });
+    a.append(el('span', { class: 'ol-z ' + (z < 0 ? 'lo' : 'hi') }, (pct > 0 ? '+' : '') + pct + ' %'));
+    a.append(el('span', { class: 'ol-main' },
+      el('b', {}, r.adr),
+      el('small', {}, `${names[r.muni] || r.muni} · ${r.t === 'villa' ? 'villa' : 'ejerlejl.'} · ${r.a} m² · ${r.r} vær.`)));
+    a.append(el('span', { class: 'ol-num' }, el('b', {}, m2(r.m2p)), el('small', {}, `område: ${m2(med)}`)));
+    a.append(el('span', { class: 'ol-num' }, el('b', {}, krM(r.p)), el('small', {}, `${r.d} dage`)));
+    box.append(a);
+  });
+  box.append(el('p', { class: 'chart-note' },
+    side === 'low'
+      ? 'Boliger hvis m²-pris ligger lavest i forhold til medianen for samme boligtype i samme kommune (robust z-score på median/MAD). Kan være fund — eller afspejle stand, støj eller stue-/kælderplan.'
+      : 'Boliger hvis m²-pris ligger højest i forhold til deres eget område — typisk nybyg, penthouse eller vandudsigt.'));
 }
 
 /* ===================== line chart (shared: DST index + trend) ===================== */
@@ -501,11 +609,27 @@ function initMap() {
   MAP.L.boundaries = L.layerGroup().addTo(map);
   MAP.L.rail = L.layerGroup().addTo(map);
   MAP.L.listings = L.layerGroup().addTo(map);
+  MAP.L.labels = L.layerGroup().addTo(map);
   MAP.L.stations = L.layerGroup().addTo(map);
   MAP.L.geo = L.layerGroup().addTo(map);
   map.fitBounds(regionBounds(), { padding: [12, 12] });
   drawRail(); drawStations();
   map.on('mouseout', hideTip);
+  map.on('zoomend', () => { resizeDots(); drawPriceLabels(); });
+  map.on('moveend', drawPriceLabels);
+
+  // "reset view" control next to the zoom buttons
+  const Reset = L.Control.extend({
+    options: { position: 'topleft' },
+    onAdd() {
+      const a = L.DomUtil.create('a', 'leaflet-bar map-reset');
+      a.href = '#'; a.title = 'Nulstil kortet'; a.innerHTML = '⤢';
+      L.DomEvent.on(a, 'click', L.DomEvent.stop).on(a, 'click', () => fitAll());
+      return a;
+    },
+  });
+  map.addControl(new Reset());
+  window.__MAP = MAP;   // handy for debugging from the console
   setTimeout(() => map.invalidateSize(), 200);
   addEventListener('resize', () => map.invalidateSize());
   MAP.inited = true;
@@ -557,18 +681,54 @@ function drawBoundaries() {
 function listingTip(r) {
   return `<div class="tt-title">${r.adr}</div><div class="tt-row"><span>${r.city}</span><b>${r.t === 'villa' ? 'Villa' : 'Ejerlejl.'}</b></div><div class="tt-row"><span>Pris</span><b>${krM(r.p)}</b></div><div class="tt-row"><span>Pris/m²</span><b>${m2(r.m2p)}</b></div><div class="tt-row"><span>Størrelse</span><b>${r.a} m² · ${r.r} vær.</b></div><div class="tt-row"><span>Liggetid</span><b>${r.d} dage</b></div><div class="tt-row"><span>S-tog</span><b>${r.ssn} · ${r.sst} m</b></div>`;
 }
+// dots grow as you zoom in — keeps them visible and easy to hover/hit
+const radiusForZoom = z => Math.max(4, Math.min(11, 4 + (z - 10) * 1.15));
+// asking price rounded to the nearest 250.000 kr, for the on-map labels
+function priceLabel(p) {
+  const v = Math.round(p / 250000) * 250000;
+  return v >= 1e6 ? (v / 1e6).toLocaleString('da-DK', { maximumFractionDigits: 2 }) + ' mio.'
+    : Math.round(v / 1000) + 'k';
+}
+const LABEL_ZOOM = 13;      // show price labels from this zoom in
+const LABEL_MAX = 220;      // …but never more than this many at once
+
 function drawListings(f) {
   MAP.L.listings.clearLayers();
+  MAP.f = f;
   let cAcc;
   if (S.colorBy === 'type') cAcc = r => r.t === 'villa' ? cssVar('--villa') : cssVar('--condo');
   else { const scale = makeScale(f.map(r => r[S.colorBy]).filter(v => v != null), S.colorBy === 'd'); cAcc = r => scale(r[S.colorBy]); }
+  const rad = radiusForZoom(MAP.map.getZoom());
   f.forEach(r => {
-    const mk = L.circleMarker([r.lat, r.lon], { renderer: MAP.renderer, radius: 4, color: cssVar('--surface'), weight: .7, fillColor: cAcc(r), fillOpacity: .95 });
+    const mk = L.circleMarker([r.lat, r.lon], { renderer: MAP.renderer, radius: rad, color: cssVar('--surface'), weight: .7, fillColor: cAcc(r), fillOpacity: .95 });
     mk.on('mouseover', ev => showTip(listingTip(r), ev.originalEvent.clientX, ev.originalEvent.clientY));
     mk.on('mousemove', ev => showTip(listingTip(r), ev.originalEvent.clientX, ev.originalEvent.clientY));
     mk.on('mouseout', hideTip);
     mk.on('click', () => { if (r.url) window.open(r.url, '_blank', 'noopener'); });
     mk.addTo(MAP.L.listings);
+  });
+  drawPriceLabels();
+}
+
+function resizeDots() {
+  const rad = radiusForZoom(MAP.map.getZoom());
+  MAP.L.listings.eachLayer(l => l.setRadius && l.setRadius(rad));
+}
+
+function drawPriceLabels() {
+  const lay = MAP.L.labels; if (!lay) return;
+  lay.clearLayers();
+  const z = MAP.map.getZoom();
+  if (z < LABEL_ZOOM || !MAP.f) return;
+  const b = MAP.map.getBounds();
+  const vis = MAP.f.filter(r => b.contains([r.lat, r.lon]));
+  if (vis.length > LABEL_MAX) return;          // too dense to be readable
+  const off = radiusForZoom(z) + 9;
+  vis.forEach(r => {
+    L.marker([r.lat, r.lon], {
+      interactive: false, keyboard: false,
+      icon: L.divIcon({ className: 'price-label', html: priceLabel(r.p), iconSize: [64, 14], iconAnchor: [32, off] }),
+    }).addTo(lay);
   });
 }
 function drawGeoPoints() {
@@ -618,7 +778,7 @@ function renderMapFacts(f) {
   const facts = [];
   if (meds.length) facts.push(['Dyreste kommune', `${meds[0].n} · ${m2(meds[0].v)}`]);
   if (meds.length > 1) facts.push(['Billigste kommune', `${meds[meds.length - 1].n} · ${m2(meds[meds.length - 1].v)}`]);
-  if (nearMed && farMed) { const prem = Math.round((nearMed / farMed - 1) * 100); facts.push(['Nær S-tog vs. længere væk', `${m2(nearMed)} <small>mod ${m2(farMed)}</small>`]); facts.push(['S-togs­premie', (prem >= 0 ? '+' : '') + prem + ' <small>% pr. m²</small>']); }
+  if (nearMed && farMed) { const prem = Math.round((nearMed / farMed - 1) * 100); facts.push(['Nær S-tog vs. længere væk', `${m2(nearMed)} <small>mod ${m2(farMed)}</small>`]); facts.push(['S-togs­præmie', (prem >= 0 ? '+' : '') + prem + ' <small>% pr. m²</small>']); }
   facts.forEach(([l, v]) => box.append(el('div', { class: 'mf' }, el('div', { class: 'mf-l' }, l), el('div', { class: 'mf-v', html: v }))));
 }
 

@@ -167,7 +167,30 @@ a { color: var(--condo); }
 .kpi .k-sub { font-size:11.5px; color:var(--muted); margin-top:3px; }
 
 /* ---- grid of cards ---- */
-.grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+.grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; align-items:start; }
+/* full-width cards shouldn't stretch their chart across 1100px */
+.card.wide .chart { max-width:760px; margin:0 auto; }
+
+/* on-map asking-price labels */
+.price-label { font-size:10.5px; font-weight:700; color:var(--ink); text-align:center; white-space:nowrap;
+  text-shadow:0 0 2px var(--surface),0 0 2px var(--surface),0 0 3px var(--surface); pointer-events:none; }
+:root[data-theme="dark"] .price-label { color:#fff; text-shadow:0 0 2px #000,0 0 3px #000; }
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .price-label { color:#fff; text-shadow:0 0 2px #000,0 0 3px #000; } }
+a.map-reset { font-size:16px; line-height:26px; text-align:center; text-decoration:none; }
+
+/* outliers list */
+.outliers { display:flex; flex-direction:column; gap:6px; }
+.ol-row { display:grid; grid-template-columns:64px 1fr auto auto; gap:12px; align-items:center;
+  padding:8px 10px; border:1px solid var(--border-2); border-radius:10px; text-decoration:none; color:inherit; }
+.ol-row:hover { background:var(--surface-2); }
+.ol-z { font-weight:700; font-size:13px; text-align:center; border-radius:6px; padding:3px 4px; }
+.ol-z.lo { color:var(--good); background:color-mix(in srgb, var(--good) 12%, transparent); }
+.ol-z.hi { color:var(--bad);  background:color-mix(in srgb, var(--bad) 12%, transparent); }
+.ol-main { display:flex; flex-direction:column; min-width:0; }
+.ol-main b { font-size:13.5px; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ol-main small, .ol-num small { color:var(--muted); font-size:11.5px; }
+.ol-num { display:flex; flex-direction:column; text-align:right; font-size:13px; }
+@media (max-width:640px){ .ol-row { grid-template-columns:56px 1fr; } .ol-num { display:none; } }
 .card { background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:16px; box-shadow:var(--shadow); min-width:0; }
 .card-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px; flex-wrap:wrap; }
 .card-head h2 { font-size:14.5px; }
