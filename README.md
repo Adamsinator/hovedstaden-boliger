@@ -1,4 +1,4 @@
-# Hovedstaden Boliger
+# Bolig Tracker
 
 A small static site that gives an overview of the housing market in the greater
 Copenhagen area — **ejerlejligheder** (owner-occupied flats) and **villaer** —

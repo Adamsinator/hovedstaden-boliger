@@ -1,0 +1,16 @@
+{
+  "name": "Bolig Tracker",
+  "short_name": "Bolig Tracker",
+  "description": "Boligmarkedet fra København til Hillerød — langs S-toget.",
+  "lang": "da",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f4f3ee",
+  "theme_color": "#1c5cb0",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
