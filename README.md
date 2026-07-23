@@ -65,9 +65,16 @@ Edit `MUNICIPALITIES` / `TYPES` in `scripts/build_data.py` to change the scope.
 ## Run locally
 
 ```bash
-python3 scripts/build_data.py          # refresh data/*.json
 python3 -m http.server 8777            # then open http://localhost:8777
+python3 scripts/build_data.py          # refresh data/*.json (needs: pip install openpyxl)
 ```
+
+Opening `index.html` via `file://` will not work — the page fetches `data/*.json`,
+which browsers block on the file protocol. Serve it over http.
+
+**Picking this up on another machine?** See **[DEVELOPMENT.md](DEVELOPMENT.md)** for
+the architecture, the data-source quirks, and the gotchas (cache-busting, station
+coordinates, the price-index anchoring, and a couple of bugs worth not repeating).
 
 ## Notes
 
