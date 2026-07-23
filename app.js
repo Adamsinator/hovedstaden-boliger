@@ -7,7 +7,7 @@ const S = {
   priceMin: null, priceMax: null, rooms: null, areaMin: null, areaMax: null,
   lotMin: null, floorMin: null, yearMin: null, daysMax: null, energyMin: null,
   hasBasement: false, hasElevator: false, hasBalcony: false,
-  search: '', colorBy: 'm2p', sort: 'd', shown: 60,
+  search: '', colorBy: 'm2p', sort: 'd', shown: 60, showRail: true,
   A: null, B: null, radA: 3, radB: 3,   // home/work points {name,lat,lon}
   dstArea: '01', indexMode: 'krm2', bvc: null,
 };
@@ -109,6 +109,7 @@ function initUI() {
   on('#energyMin', 'energyMin'); on('#hasBasement', 'hasBasement'); on('#hasElevator', 'hasElevator');
   on('#hasBalcony', 'hasBalcony'); on('#colorBy', 'colorBy'); on('#sort', 'sort');
   on('#nearS', 'nearS');
+  $('#showRail').addEventListener('change', e => { S.showRail = e.target.checked; applyRailVisibility(); renderMapLegend(S.colorBy, filtered(), LINE_COLORS()); });
   $('#search').addEventListener('input', e => {
     S.search = e.target.value.toLowerCase().trim(); S.shown = 60; render();
     // A postnummer (4-digit token, e.g. 2900) zooms the map to that area only;
@@ -660,7 +661,7 @@ function initMap() {
   MAP.L.stations = L.layerGroup().addTo(map);
   MAP.L.geo = L.layerGroup().addTo(map);
   map.fitBounds(regionBounds(), { padding: [12, 12] });
-  drawRail(); drawStations();
+  drawRail(); drawStations(); applyRailVisibility();
   map.on('mouseout', hideTip);
   map.on('zoomend', () => { resizeDots(); drawPriceLabels(); });
   map.on('moveend', drawPriceLabels);
@@ -690,6 +691,15 @@ function setTiles() {
   MAP.tiles.addTo(MAP.map); MAP.tiles.bringToBack();
 }
 
+// Show or hide the S-train / Kystbane lines and stations together.
+function applyRailVisibility() {
+  if (!MAP.map) return;
+  [MAP.L.rail, MAP.L.stations].forEach(layer => {
+    if (!layer) return;
+    if (S.showRail) { if (!MAP.map.hasLayer(layer)) layer.addTo(MAP.map); }
+    else if (MAP.map.hasLayer(layer)) MAP.map.removeLayer(layer);
+  });
+}
 function drawRail() {
   MAP.L.rail.clearLayers();
   const stMap = Object.fromEntries(S.meta.stations.map(s => [s.name, s]));
@@ -856,7 +866,7 @@ function renderMapLegend(colorBy, f, lineColors) {
     const label = colorBy === 'm2p' ? 'Pris pr. m²' : colorBy === 'p' ? 'Pris' : 'Liggetid';
     box.append(el('span', { class: 'legend-item' }, label + ':'), el('span', { class: 'legend-item' }, colorBy === 'd' ? 'kort' : fmt(lo)), ramp, el('span', { class: 'legend-item' }, colorBy === 'd' ? 'lang' : fmt(hi)));
   }
-  S.meta.lines.forEach(L => box.append(el('span', { class: 'legend-item' }, el('span', { class: 'legend-line' + (L.corridor === 'kystbanen' ? ' dashed' : ''), style: `border-top-color:${lineColors[L.corridor]}` }), L.label)));
+  if (S.showRail) S.meta.lines.forEach(L => box.append(el('span', { class: 'legend-item' }, el('span', { class: 'legend-line' + (L.corridor === 'kystbanen' ? ' dashed' : ''), style: `border-top-color:${lineColors[L.corridor]}` }), L.label)));
 }
 function legItem(color, text) { return el('span', { class: 'legend-item' }, el('span', { class: 'swatch', style: `background:${color}` }), text); }
 
