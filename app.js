@@ -724,11 +724,15 @@ function drawPriceLabels() {
   const b = MAP.map.getBounds();
   const vis = MAP.f.filter(r => b.contains([r.lat, r.lon]));
   if (vis.length > LABEL_MAX) return;          // too dense to be readable
-  const off = radiusForZoom(z) + 9;
+  const off = radiusForZoom(z) + 6;   // bubble tail sits just above the dot
   vis.forEach(r => {
     L.marker([r.lat, r.lon], {
       interactive: false, keyboard: false,
-      icon: L.divIcon({ className: 'price-label', html: priceLabel(r.p), iconSize: [64, 14], iconAnchor: [32, off] }),
+      icon: L.divIcon({
+        className: 'price-label',
+        html: `<b class="${r.t === 'villa' ? 'villa' : 'condo'}">${priceLabel(r.p)}</b>`,
+        iconSize: [80, 22], iconAnchor: [40, off + 22],
+      }),
     }).addTo(lay);
   });
 }

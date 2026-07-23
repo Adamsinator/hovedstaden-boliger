@@ -16,6 +16,7 @@
   --bad:          #d03b3b;
   --shadow:       0 1px 2px rgba(11,11,11,.05), 0 8px 24px rgba(11,11,11,.05);
   --map-bg:       #dbe6ee;
+  --bubble-edge:  #c8ced6;
   --land:         #f3f1ea;
   --land-edge:    #cfd6d0;
   --land-sel:     #fbf7ec;
@@ -41,6 +42,7 @@
   --bad:          #e06464;
   --shadow:       0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
   --map-bg:       #0f1620;
+  --bubble-edge:  #3a4149;
   --land:         #20242a;
   --land-edge:    #333a40;
   --land-sel:     #2b2a20;
@@ -55,7 +57,7 @@
     --border:rgba(255,255,255,.12); --border-2:rgba(255,255,255,.06);
     --condo:#3987e5; --villa:#d95926; --good:#0ca30c; --bad:#e06464;
     --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
-    --map-bg:#0f1620; --land:#20242a; --land-edge:#333a40; --land-sel:#2b2a20; --land-sel-edge:#b7902f;
+    --map-bg:#0f1620; --bubble-edge:#3a4149; --land:#20242a; --land-edge:#333a40; --land-sel:#2b2a20; --land-sel-edge:#b7902f;
     --seq-1:#12324f; --seq-2:#184f95; --seq-3:#256abf; --seq-4:#3987e5; --seq-5:#6da7ec; --seq-6:#9ec5f4;
   }
 }
@@ -171,11 +173,26 @@ a { color: var(--condo); }
 /* full-width cards shouldn't stretch their chart across 1100px */
 .card.wide .chart { max-width:760px; margin:0 auto; }
 
-/* on-map asking-price labels */
-.price-label { font-size:10.5px; font-weight:700; color:var(--ink); text-align:center; white-space:nowrap;
-  text-shadow:0 0 2px var(--surface),0 0 2px var(--surface),0 0 3px var(--surface); pointer-events:none; }
-:root[data-theme="dark"] .price-label { color:#fff; text-shadow:0 0 2px #000,0 0 3px #000; }
-@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .price-label { color:#fff; text-shadow:0 0 2px #000,0 0 3px #000; } }
+/* on-map asking-price labels — small speech bubbles above each dot */
+.price-label { display:flex; align-items:flex-end; justify-content:center; pointer-events:none;
+  background:none; border:0; }
+.price-label b {
+  position:relative; background:var(--surface); color:var(--ink);
+  border:1px solid var(--bubble-edge); border-radius:11px; padding:2px 8px;
+  font-size:11px; font-weight:700; line-height:1.35; white-space:nowrap;
+  box-shadow:0 2px 6px rgba(0,0,0,.18);
+}
+.price-label b.villa { border-color:var(--villa); }
+.price-label b.condo { border-color:var(--condo); }
+/* the tail: outer (border) triangle, then the inner (fill) triangle on top */
+.price-label b::before, .price-label b::after {
+  content:''; position:absolute; left:50%; transform:translateX(-50%);
+  width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent;
+}
+.price-label b::before { bottom:-6px; border-top:6px solid var(--bubble-edge); }
+.price-label b::after  { bottom:-4.5px; border-top:6px solid var(--surface); }
+.price-label b.villa::before { border-top-color:var(--villa); }
+.price-label b.condo::before { border-top-color:var(--condo); }
 a.map-reset { font-size:16px; line-height:26px; text-align:center; text-decoration:none; }
 
 /* outliers list */
