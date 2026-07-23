@@ -317,13 +317,40 @@ function hbars(mount, rows, opt = {}) {
   mount.append(svg);
 }
 
+// Vertical columns, one per kommune, with the (long) kommune names angled so
+// all ~14 fit across the wide card without shrinking to nothing.
 function renderMuniChart(f) {
+  const mount = $('#chartMuni'); mount.innerHTML = '';
   const byM = new Map();
   f.forEach(r => { (byM.get(r.muni) || byM.set(r.muni, []).get(r.muni)).push(r.m2p); });
   const names = Object.fromEntries(S.meta.municipalities.map(m => [m.slug, m.name]));
-  const rows = [...byM.entries()].map(([slug, arr]) => ({ label: names[slug] || slug, value: Math.round(median(arr.filter(Boolean))), n: arr.length, color: typeColor() }))
+  const rows = [...byM.entries()].map(([slug, arr]) => ({ label: names[slug] || slug, value: Math.round(median(arr.filter(Boolean))), n: arr.length }))
     .filter(r => r.value).sort((a, b) => b.value - a.value);
-  hbars($('#chartMuni'), rows, { fmt: m2, vlabel: 'Median pris/m²' });
+  if (!rows.length) { mount.append(el('div', { class: 'loading' }, 'Ingen data for det valgte filter.')); return; }
+  const W = 760, H = 300, padL = 40, padR = 12, padT = 16, padB = 82;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const max = Math.max(...rows.map(r => r.value)) * 1.06 || 1;
+  const kc = v => v >= 1000 ? Math.round(v / 1000) + 'k' : Math.round(v);
+  const svg = svel('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img' });
+  for (let g = 0; g <= 4; g++) {
+    const y = padT + plotH - g / 4 * plotH;
+    svg.append(svel('line', { x1: padL, y1: y, x2: W - padR, y2: y, class: 'gridline' }));
+    const t = svel('text', { x: padL - 6, y: y + 3, 'text-anchor': 'end', class: 'axis-txt' }); t.textContent = kc(max * g / 4); svg.append(t);
+  }
+  const bw = plotW / rows.length;
+  rows.forEach((r, i) => {
+    const h = r.value / max * plotH, x = padL + i * bw, y = padT + plotH - h;
+    const g = svel('g');
+    g.append(svel('rect', { x: x + bw * .16, y, width: bw * .68, height: h, rx: 4, fill: r.color || typeColor() }));
+    const vt = svel('text', { x: x + bw / 2, y: y - 5, 'text-anchor': 'middle', class: 'bar-val' }); vt.textContent = kc(r.value); g.append(vt);
+    g.addEventListener('mousemove', e => showTip(`<div class="tt-title">${r.label}</div><div class="tt-row"><span>Median pris/m²</span><b>${m2(r.value)}</b></div><div class="tt-row"><span>Antal boliger</span><b>${r.n}</b></div>`, e.clientX, e.clientY));
+    g.addEventListener('mouseleave', hideTip);
+    svg.append(g);
+    const lx = x + bw / 2, ly = H - padB + 15;
+    const lt = svel('text', { x: lx, y: ly, 'text-anchor': 'end', class: 'axis-txt' }); lt.textContent = r.label;
+    lt.setAttribute('transform', `rotate(-40 ${lx} ${ly})`); svg.append(lt);
+  });
+  mount.append(svg);
 }
 
 function renderDistChart(f) {
