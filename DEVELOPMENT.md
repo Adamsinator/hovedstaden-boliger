@@ -4,8 +4,8 @@ Everything needed to pick this project up on another machine. The repo is
 self-contained: no build step, no package manager, no secrets.
 
 ```bash
-git clone https://github.com/Adamsinator/hovedstaden-boliger.git
-cd hovedstaden-boliger
+git clone https://github.com/Adamsinator/bolig-tracker.git
+cd bolig-tracker
 python3 -m http.server 8777        # then open http://localhost:8777
 ```
 
@@ -107,7 +107,7 @@ resampled to one value per year. Sanity anchors: 2006 peak ≈ 191, 2012 trough
 Push to `main`; GitHub Pages builds from `main` / root. Check status with:
 
 ```bash
-gh api repos/Adamsinator/hovedstaden-boliger/pages/builds/latest --jq .status
+gh api repos/Adamsinator/bolig-tracker/pages/builds/latest --jq .status
 ```
 
 The daily Action commits to `main` too, so `git pull --rebase` before pushing if

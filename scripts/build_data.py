@@ -61,7 +61,7 @@ def fetch(muni, addr_type):
         })
         req = urllib.request.Request(
             f"{API}?{qs}",
-            headers={"Accept": "application/json", "User-Agent": "hovedstaden-boliger/1.0"},
+            headers={"Accept": "application/json", "User-Agent": "bolig-tracker/1.0"},
         )
         for attempt in range(4):
             try:
@@ -354,7 +354,7 @@ def fetch_bvc():
         print("    BVC skipped (openpyxl not installed)", file=sys.stderr)
         return None
     try:
-        req = urllib.request.Request(BVC_URL, headers={"User-Agent": "hovedstaden-boliger/1.0"})
+        req = urllib.request.Request(BVC_URL, headers={"User-Agent": "bolig-tracker/1.0"})
         raw = urllib.request.urlopen(req, timeout=60).read()
         wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
     except Exception as e:
@@ -414,6 +414,8 @@ def snapshot(listings, date_str):
         m2 = [r["m2p"] for r in rows if r.get("m2p")]
         days = [r["d"] for r in rows if r.get("d") is not None]
         cuts = sum(1 for r in rows if (r.get("chg") or 0) < 0)
+        near_m2 = [r["m2p"] for r in rows if r.get("near") and r.get("m2p")]
+        far_m2 = [r["m2p"] for r in rows if not r.get("near") and r.get("m2p")]
         if not rows:
             return None
         return {
@@ -422,6 +424,14 @@ def snapshot(listings, date_str):
             "medM2": round(median(m2)) if m2 else None,
             "medDays": round(median(days)) if days is not None and days else None,
             "pctCut": round(cuts / len(rows) * 100, 1),
+            # distribution (so we can reconstruct the spread over time, not just
+            # the median) and the S-tog premium — all forward-only enrichments
+            "q1M2": _r(quantile(m2, 0.25)),
+            "q3M2": _r(quantile(m2, 0.75)),
+            "q1Price": _r(quantile(prices, 0.25)),
+            "q3Price": _r(quantile(prices, 0.75)),
+            "medM2Near": round(median(near_m2)) if near_m2 else None,
+            "medM2Far": round(median(far_m2)) if far_m2 else None,
         }
 
     rows_out = []
@@ -446,7 +456,24 @@ def median(arr):
     return a[m] if len(a) % 2 else (a[m - 1] + a[m]) / 2
 
 
-def merge_history(data_dir, new_rows, date_str, keep_days=800):
+def quantile(arr, q):
+    """Linear-interpolated quantile; None for empty input."""
+    if not arr:
+        return None
+    a = sorted(arr)
+    if len(a) == 1:
+        return a[0]
+    pos = (len(a) - 1) * q
+    lo = int(pos)
+    frac = pos - lo
+    return a[lo] + (a[lo + 1] - a[lo]) * frac if lo + 1 < len(a) else a[lo]
+
+
+def _r(v):
+    return round(v) if v is not None else None
+
+
+def merge_history(data_dir, new_rows, date_str, keep_days=3660):   # ~10 years
     path = os.path.join(data_dir, "history.json")
     series = []
     if os.path.exists(path):

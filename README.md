@@ -4,7 +4,7 @@ A small static site that gives an overview of the housing market in the greater
 Copenhagen area — **ejerlejligheder** (owner-occupied flats) and **villaer** —
 from København up to Hillerød, with a focus on proximity to the **S-train**.
 
-Live: https://adamsinator.github.io/hovedstaden-boliger/
+Live: https://adamsinator.github.io/bolig-tracker/
 
 ## What it shows
 
