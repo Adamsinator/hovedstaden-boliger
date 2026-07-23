@@ -109,7 +109,13 @@ function initUI() {
   on('#energyMin', 'energyMin'); on('#hasBasement', 'hasBasement'); on('#hasElevator', 'hasElevator');
   on('#hasBalcony', 'hasBalcony'); on('#colorBy', 'colorBy'); on('#sort', 'sort');
   on('#nearS', 'nearS');
-  $('#search').addEventListener('input', e => { S.search = e.target.value.toLowerCase().trim(); S.shown = 60; render(); });
+  $('#search').addEventListener('input', e => {
+    S.search = e.target.value.toLowerCase().trim(); S.shown = 60; render();
+    // A postnummer (4-digit token, e.g. 2900) zooms the map to that area only;
+    // clearing the search restores the current kommune view.
+    if (/\b\d{4}\b/.test(S.search)) fitToPoints(filtered());
+    else if (!S.search) fitToSelection();
+  });
   $('#loadMore').addEventListener('click', () => { S.shown += 60; renderCards(filtered()); });
   $('#resetFilters').addEventListener('click', resetFilters);
 
@@ -810,6 +816,18 @@ function fitToSelection() {
   let a = 1e9, b = 1e9, c = -1e9, d = -1e9;
   sel.forEach(g => { a = Math.min(a, g.bbox[1]); b = Math.min(b, g.bbox[0]); c = Math.max(c, g.bbox[3]); d = Math.max(d, g.bbox[2]); });
   MAP.map.fitBounds([[a, b], [c, d]], { padding: [18, 18] });
+}
+// Zoom the map to the bounding box of a set of listings — used when the search
+// narrows to a postnummer so the map shows just that area (e.g. 2900 Hellerup).
+function fitToPoints(f) {
+  if (!MAP.map) return false;
+  const pts = f.filter(r => r.lat && r.lon);
+  if (!pts.length) return false;
+  if (pts.length === 1) { MAP.map.setView([pts[0].lat, pts[0].lon], 15); return true; }
+  let a = 1e9, b = 1e9, c = -1e9, d = -1e9;
+  pts.forEach(r => { a = Math.min(a, r.lat); c = Math.max(c, r.lat); b = Math.min(b, r.lon); d = Math.max(d, r.lon); });
+  MAP.map.fitBounds([[a, b], [c, d]], { padding: [40, 40], maxZoom: 15 });
+  return true;
 }
 
 function renderMapFacts(f) {
