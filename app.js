@@ -295,95 +295,77 @@ function showTip(html, x, y) {
 }
 const hideTip = () => { TT.hidden = true; };
 
-/* ===================== horizontal bar chart ===================== */
-function hbars(mount, rows, opt = {}) {
+/* ===================== vertical column chart ===================== */
+// compact kroner: 86.600 -> "87k"
+const kc = v => v >= 1000 ? Math.round(v / 1000) + 'k' : Math.round(v);
+// rows: [{label, value, n?, color?}].  opt: yfmt (y-axis + on-column label),
+// fmt (full value for tooltip), vlabel, tip(r) (custom tooltip), angle (x-label
+// rotation; 0 = horizontal), W, H, padB, headroom, topLabels.
+function vbars(mount, rows, opt = {}) {
   mount.innerHTML = '';
-  if (!rows.length) { mount.append(el('div', { class: 'loading' }, 'Ingen data for det valgte filter.')); return; }
-  const W = 640, rowH = 26, padL = 132, padR = 62, padT = 6, padB = 4;
-  const H = padT + padB + rows.length * rowH;
-  const max = Math.max(...rows.map(r => r.value)) * 1.02 || 1;
-  const svg = svel('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img' });
-  const plotW = W - padL - padR;
-  rows.forEach((r, i) => {
-    const y = padT + i * rowH, bw = Math.max(2, r.value / max * plotW);
-    const g = svel('g', { class: 'bar-row' });
-    const lbl = svel('text', { x: padL - 8, y: y + rowH / 2 + 4, 'text-anchor': 'end', class: 'bar-lbl' }); lbl.textContent = r.label; g.append(lbl);
-    g.append(svel('rect', { x: padL, y: y + 4, width: bw, height: rowH - 10, rx: 4, fill: r.color || typeColor() }));
-    const val = svel('text', { x: padL + bw + 7, y: y + rowH / 2 + 4, class: 'bar-val' }); val.textContent = opt.fmt ? opt.fmt(r.value) : num(r.value); g.append(val);
-    g.addEventListener('mousemove', e => showTip(`<div class="tt-title">${r.label}</div><div class="tt-row"><span>${opt.vlabel || 'Værdi'}</span><b>${opt.fmt ? opt.fmt(r.value) : num(r.value)}</b></div>${r.n != null ? `<div class="tt-row"><span>Antal boliger</span><b>${r.n}</b></div>` : ''}`, e.clientX, e.clientY));
-    g.addEventListener('mouseleave', hideTip);
-    svg.append(g);
-  });
-  mount.append(svg);
-}
-
-// Vertical columns, one per kommune, with the (long) kommune names angled so
-// all ~14 fit across the wide card without shrinking to nothing.
-function renderMuniChart(f) {
-  const mount = $('#chartMuni'); mount.innerHTML = '';
-  const byM = new Map();
-  f.forEach(r => { (byM.get(r.muni) || byM.set(r.muni, []).get(r.muni)).push(r.m2p); });
-  const names = Object.fromEntries(S.meta.municipalities.map(m => [m.slug, m.name]));
-  const rows = [...byM.entries()].map(([slug, arr]) => ({ label: names[slug] || slug, value: Math.round(median(arr.filter(Boolean))), n: arr.length }))
-    .filter(r => r.value).sort((a, b) => b.value - a.value);
-  if (!rows.length) { mount.append(el('div', { class: 'loading' }, 'Ingen data for det valgte filter.')); return; }
-  const W = 760, H = 300, padL = 40, padR = 12, padT = 16, padB = 82;
+  if (!rows.length) { mount.append(el('div', { class: 'loading' }, opt.empty || 'Ingen data for det valgte filter.')); return; }
+  const W = opt.W || 640, H = opt.H || 300;
+  const padL = opt.padL ?? 40, padR = 12, padT = 16, padB = opt.padB ?? 74;
   const plotW = W - padL - padR, plotH = H - padT - padB;
-  const max = Math.max(...rows.map(r => r.value)) * 1.06 || 1;
-  const kc = v => v >= 1000 ? Math.round(v / 1000) + 'k' : Math.round(v);
+  const max = Math.max(...rows.map(r => r.value)) * (opt.headroom ?? 1.08) || 1;
+  const yfmt = opt.yfmt || num, fmt = opt.fmt || yfmt, angle = opt.angle ?? -40;
   const svg = svel('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img' });
   for (let g = 0; g <= 4; g++) {
     const y = padT + plotH - g / 4 * plotH;
     svg.append(svel('line', { x1: padL, y1: y, x2: W - padR, y2: y, class: 'gridline' }));
-    const t = svel('text', { x: padL - 6, y: y + 3, 'text-anchor': 'end', class: 'axis-txt' }); t.textContent = kc(max * g / 4); svg.append(t);
+    const t = svel('text', { x: padL - 6, y: y + 3, 'text-anchor': 'end', class: 'axis-txt' }); t.textContent = yfmt(max * g / 4); svg.append(t);
   }
   const bw = plotW / rows.length;
   rows.forEach((r, i) => {
     const h = r.value / max * plotH, x = padL + i * bw, y = padT + plotH - h;
     const g = svel('g');
     g.append(svel('rect', { x: x + bw * .16, y, width: bw * .68, height: h, rx: 4, fill: r.color || typeColor() }));
-    const vt = svel('text', { x: x + bw / 2, y: y - 5, 'text-anchor': 'middle', class: 'bar-val' }); vt.textContent = kc(r.value); g.append(vt);
-    g.addEventListener('mousemove', e => showTip(`<div class="tt-title">${r.label}</div><div class="tt-row"><span>Median pris/m²</span><b>${m2(r.value)}</b></div><div class="tt-row"><span>Antal boliger</span><b>${r.n}</b></div>`, e.clientX, e.clientY));
+    if (opt.topLabels !== false) { const vt = svel('text', { x: x + bw / 2, y: y - 5, 'text-anchor': 'middle', class: 'bar-val' }); vt.textContent = yfmt(r.value); g.append(vt); }
+    g.addEventListener('mousemove', e => showTip(opt.tip ? opt.tip(r) : `<div class="tt-title">${r.label}</div><div class="tt-row"><span>${opt.vlabel || 'Værdi'}</span><b>${fmt(r.value)}</b></div>${r.n != null ? `<div class="tt-row"><span>Antal boliger</span><b>${r.n}</b></div>` : ''}`, e.clientX, e.clientY));
     g.addEventListener('mouseleave', hideTip);
     svg.append(g);
     const lx = x + bw / 2, ly = H - padB + 15;
-    const lt = svel('text', { x: lx, y: ly, 'text-anchor': 'end', class: 'axis-txt' }); lt.textContent = r.label;
-    lt.setAttribute('transform', `rotate(-40 ${lx} ${ly})`); svg.append(lt);
+    const lt = svel('text', { x: lx, y: ly, class: 'axis-txt' }); lt.textContent = r.label;
+    if (angle) { lt.setAttribute('text-anchor', 'end'); lt.setAttribute('transform', `rotate(${angle} ${lx} ${ly})`); }
+    else lt.setAttribute('text-anchor', 'middle');
+    svg.append(lt);
   });
   mount.append(svg);
+}
+
+// Vertical columns, one per kommune — the (long) names angled so all ~14 fit
+// across the wide card.
+function renderMuniChart(f) {
+  const byM = new Map();
+  f.forEach(r => { (byM.get(r.muni) || byM.set(r.muni, []).get(r.muni)).push(r.m2p); });
+  const names = Object.fromEntries(S.meta.municipalities.map(m => [m.slug, m.name]));
+  const rows = [...byM.entries()].map(([slug, arr]) => ({ label: names[slug] || slug, value: Math.round(median(arr.filter(Boolean))), n: arr.length }))
+    .filter(r => r.value).sort((a, b) => b.value - a.value);
+  vbars($('#chartMuni'), rows, { W: 760, padB: 82, angle: -40, yfmt: kc, fmt: m2, vlabel: 'Median pris/m²' });
 }
 
 function renderDistChart(f) {
   const buckets = [['0–500 m', 0, 500], ['500 m–1 km', 500, 1000], ['1–2 km', 1000, 2000], ['2–4 km', 2000, 4000], ['over 4 km', 4000, Infinity]];
   const rows = buckets.map(([label, lo, hi]) => {
     const arr = f.filter(r => r.sst >= lo && r.sst < hi).map(r => r.m2p).filter(Boolean);
-    return { label, value: Math.round(median(arr) || 0), n: arr.length, color: typeColor() };
+    return { label, value: Math.round(median(arr) || 0), n: arr.length };
   }).filter(r => r.n);
-  hbars($('#chartDist'), rows, { fmt: m2, vlabel: 'Median pris/m²' });
+  vbars($('#chartDist'), rows, { angle: 0, padB: 34, yfmt: kc, fmt: m2, vlabel: 'Median pris/m²' });
 }
 
 function renderDaysChart(f) {
   const days = f.map(r => r.d).filter(v => v != null);
-  const mount = $('#chartDays'); mount.innerHTML = '';
-  if (!days.length) { mount.append(el('div', { class: 'loading' }, 'Ingen data.')); return; }
+  const mount = $('#chartDays');
+  if (!days.length) { mount.innerHTML = ''; mount.append(el('div', { class: 'loading' }, 'Ingen data.')); return; }
   const edges = [0, 14, 30, 60, 90, 120, 180, 270, 365, Infinity];
   const labels = ['<2 uger', '2–4 uger', '1–2 mdr', '2–3 mdr', '3–4 mdr', '4–6 mdr', '6–9 mdr', '9–12 mdr', '>1 år'];
   const counts = new Array(labels.length).fill(0);
   days.forEach(d => { for (let i = 0; i < edges.length - 1; i++) if (d >= edges[i] && d < edges[i + 1]) { counts[i]++; break; } });
-  const W = 640, H = 220, padL = 34, padR = 12, padT = 10, padB = 40, plotW = W - padL - padR, plotH = H - padT - padB;
-  const max = Math.max(...counts) || 1;
-  const svg = svel('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img' });
-  for (let g = 0; g <= 4; g++) { const y = padT + plotH - g / 4 * plotH; svg.append(svel('line', { x1: padL, y1: y, x2: W - padR, y2: y, class: 'gridline' })); const t = svel('text', { x: padL - 6, y: y + 3, 'text-anchor': 'end', class: 'axis-txt' }); t.textContent = Math.round(max * g / 4); svg.append(t); }
-  const bw = plotW / counts.length;
-  counts.forEach((c, i) => {
-    const h = c / max * plotH, x = padL + i * bw, y = padT + plotH - h;
-    const g = svel('g'); g.append(svel('rect', { x: x + bw * .14, y, width: bw * .72, height: h, rx: 4, fill: typeColor() }));
-    g.addEventListener('mousemove', e => showTip(`<div class="tt-title">${labels[i]}</div><div class="tt-row"><span>Boliger</span><b>${c}</b></div><div class="tt-row"><span>Andel</span><b>${Math.round(c / days.length * 100)} %</b></div>`, e.clientX, e.clientY));
-    g.addEventListener('mouseleave', hideTip);
-    svg.append(g);
-    const lt = svel('text', { x: x + bw / 2, y: H - padB + 15, 'text-anchor': 'middle', class: 'axis-txt' }); lt.textContent = labels[i]; lt.setAttribute('transform', `rotate(-30 ${x + bw / 2} ${H - padB + 15})`); svg.append(lt);
+  const rows = labels.map((label, i) => ({ label, value: counts[i] }));
+  vbars(mount, rows, {
+    angle: -35, padB: 54, yfmt: v => Math.round(v),
+    tip: r => `<div class="tt-title">${r.label}</div><div class="tt-row"><span>Boliger</span><b>${r.value}</b></div><div class="tt-row"><span>Andel</span><b>${Math.round(r.value / days.length * 100)} %</b></div>`,
   });
-  mount.append(svg);
 }
 
 /* ===================== price by build year ===================== */
@@ -393,9 +375,9 @@ function renderYearChart(f) {
     ['2010–19', 2010, 2020], ['2020+', 2020, 1e9]];
   const rows = buckets.map(([label, lo, hi]) => {
     const arr = f.filter(r => r.y && r.y >= lo && r.y < hi).map(r => r.m2p).filter(Boolean);
-    return { label, value: Math.round(median(arr) || 0), n: arr.length, color: typeColor() };
+    return { label, value: Math.round(median(arr) || 0), n: arr.length };
   }).filter(r => r.n >= 5);
-  hbars($('#chartYear'), rows, { fmt: m2, vlabel: 'Median pris/m²' });
+  vbars($('#chartYear'), rows, { angle: -25, padB: 44, yfmt: kc, fmt: m2, vlabel: 'Median pris/m²' });
 }
 
 /* ===================== scatter: size vs kr/m² ===================== */
@@ -503,12 +485,20 @@ function outlierRows(f) {
   });
   return out;
 }
+const OUTLIER_Z = 1.5;   // only show homes at least this many robust z-scores off
 function renderOutliers(f) {
   const box = $('#outliers'); box.innerHTML = '';
   const side = $('#outlierSide').value;
   const all = outlierRows(f);
-  if (!all.length) { box.append(el('div', { class: 'loading' }, 'For få boliger i hvert område til at beregne afvigelser.')); return; }
-  const sorted = all.sort((a, b) => side === 'low' ? a.z - b.z : b.z - a.z).slice(0, 12);
+  // only genuine outliers: past ±1.5 robust z on the requested side
+  const sig = all.filter(o => side === 'low' ? o.z <= -OUTLIER_Z : o.z >= OUTLIER_Z);
+  if (!sig.length) {
+    box.append(el('div', { class: 'loading' }, all.length
+      ? `Ingen boliger afviger mere end ${OUTLIER_Z.toLocaleString('da-DK')} z fra deres områdes m²-pris i det valgte udsnit.`
+      : 'For få boliger i hvert område til at beregne afvigelser.'));
+    return;
+  }
+  const sorted = sig.sort((a, b) => side === 'low' ? a.z - b.z : b.z - a.z).slice(0, 12);
   const names = Object.fromEntries(S.meta.municipalities.map(m => [m.slug, m.name]));
   sorted.forEach(({ r, z, med }) => {
     const pct = Math.round((r.m2p / med - 1) * 100);
@@ -516,15 +506,15 @@ function renderOutliers(f) {
     a.append(el('span', { class: 'ol-z ' + (z < 0 ? 'lo' : 'hi') }, (pct > 0 ? '+' : '') + pct + ' %'));
     a.append(el('span', { class: 'ol-main' },
       el('b', {}, r.adr),
-      el('small', {}, `${names[r.muni] || r.muni} · ${r.t === 'villa' ? 'villa' : 'ejerlejl.'} · ${r.a} m² · ${r.r} vær.`)));
+      el('small', {}, `${names[r.muni] || r.muni} · ${r.t === 'villa' ? 'villa' : 'ejerlejl.'} · ${r.a} m² · ${r.r} vær. · z ${(z > 0 ? '+' : '−') + Math.abs(z).toFixed(1).replace('.', ',')}`)));
     a.append(el('span', { class: 'ol-num' }, el('b', {}, m2(r.m2p)), el('small', {}, `område: ${m2(med)}`)));
     a.append(el('span', { class: 'ol-num' }, el('b', {}, krM(r.p)), el('small', {}, `${r.d} dage`)));
     box.append(a);
   });
   box.append(el('p', { class: 'chart-note' },
     side === 'low'
-      ? 'Boliger hvis m²-pris ligger lavest i forhold til medianen for samme boligtype i samme kommune (robust z-score på median/MAD). Kan være fund — eller afspejle stand, støj eller stue-/kælderplan.'
-      : 'Boliger hvis m²-pris ligger højest i forhold til deres eget område — typisk nybyg, penthouse eller vandudsigt.'));
+      ? `Boliger mindst ${OUTLIER_Z.toLocaleString('da-DK')} robuste z-scores under medianen for samme boligtype i samme kommune (median/MAD). Kan være fund — eller afspejle stand, støj eller stue-/kælderplan.`
+      : `Boliger mindst ${OUTLIER_Z.toLocaleString('da-DK')} robuste z-scores over deres eget område — typisk nybyg, penthouse eller vandudsigt.`));
 }
 
 /* ===================== line chart (shared: DST index + trend) ===================== */

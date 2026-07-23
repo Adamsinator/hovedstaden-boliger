@@ -320,7 +320,9 @@ a.map-reset { font-size:16px; line-height:26px; text-align:center; text-decorati
   .map-facts { flex-direction:row; flex-wrap:wrap; }
   .map-facts .mf { flex:1 1 120px; }
   .map-legend { flex-direction:row; flex-wrap:wrap; gap:12px; align-items:center; }
-  .map-wrap svg { height:min(64vh,520px); }
+  /* the region is roughly square, so a portrait 76vh map left big empty margins —
+     size the map closer to the region's aspect on narrow screens */
+  #map { height:min(112vw,460px); }
   .commute-grid { grid-template-columns:1fr; }
 }
 @media (max-width: 520px) {
