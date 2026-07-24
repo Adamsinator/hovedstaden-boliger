@@ -7,7 +7,7 @@ const S = {
   priceMin: null, priceMax: null, rooms: null, areaMin: null, areaMax: null,
   lotMin: null, floorMin: null, yearMin: null, daysMax: null, energyMin: null,
   hasBasement: false, hasElevator: false, hasBalcony: false,
-  search: '', colorBy: 'm2p', sort: 'd', shown: 60, showRail: true, trackerMap: null,
+  search: '', colorBy: 'm2p', sort: 'd', shown: 60, showRail: true, trackerMap: null, onlyCut: false,
   A: null, B: null, radA: 3, radB: 3,   // home/work points {name,lat,lon}
   dstArea: '01', indexMode: 'krm2', bvc: null,
 };
@@ -53,6 +53,7 @@ async function boot() {
     ]);
     S.meta = meta; S.all = listings; S.geo = geo; S.index = index; S.history = history; S.bvc = bvc;
     meta.municipalities.forEach(m => S.munis.add(m.slug));
+    decodeState();          // apply any filters carried in the URL
     initUI();
     initMap();
     render();
@@ -109,7 +110,7 @@ function initUI() {
   on('#floorMin', 'floorMin', 1); on('#yearMin', 'yearMin', 1); on('#daysMax', 'daysMax', 1);
   on('#energyMin', 'energyMin'); on('#hasBasement', 'hasBasement'); on('#hasElevator', 'hasElevator');
   on('#hasBalcony', 'hasBalcony'); on('#colorBy', 'colorBy'); on('#sort', 'sort');
-  on('#nearS', 'nearS');
+  on('#nearS', 'nearS'); on('#onlyCut', 'onlyCut');
   $('#showRail').addEventListener('change', e => { S.showRail = e.target.checked; applyRailVisibility(); renderMapLegend(S.colorBy, filtered(), LINE_COLORS()); });
   $('#search').addEventListener('input', e => {
     S.search = e.target.value.toLowerCase().trim(); S.shown = 60; render();
@@ -156,20 +157,63 @@ function initUI() {
     localStorage.setItem('hbTheme', dark ? 'light' : 'dark');
     refreshMapTheme(); render();
   });
+
+  syncControlsFromState();   // reflect any URL-provided filters in the controls
 }
 
 function resetFilters() {
   Object.assign(S, { priceMin: null, priceMax: null, rooms: null, areaMin: null, areaMax: null, lotMin: null,
-    floorMin: null, yearMin: null, daysMax: null, energyMin: null, hasBasement: false, hasElevator: false, hasBalcony: false });
+    floorMin: null, yearMin: null, daysMax: null, energyMin: null, hasBasement: false, hasElevator: false, hasBalcony: false, onlyCut: false });
   ['#priceMin', '#priceMax', '#rooms', '#areaMin', '#areaMax', '#lotMin', '#floorMin', '#yearMin', '#daysMax', '#energyMin'].forEach(id => $(id).value = '');
-  ['#hasBasement', '#hasElevator', '#hasBalcony'].forEach(id => $(id).checked = false);
+  ['#hasBasement', '#hasElevator', '#hasBalcony', '#onlyCut'].forEach(id => $(id).checked = false);
   S.shown = 60; render();
 }
 function activeFilterCount() {
   let n = 0;
   ['priceMin', 'priceMax', 'rooms', 'areaMin', 'areaMax', 'lotMin', 'floorMin', 'yearMin', 'daysMax', 'energyMin'].forEach(k => { if (S[k]) n++; });
-  ['hasBasement', 'hasElevator', 'hasBalcony'].forEach(k => { if (S[k]) n++; });
+  ['hasBasement', 'hasElevator', 'hasBalcony', 'onlyCut'].forEach(k => { if (S[k]) n++; });
   return n;
+}
+
+/* ---- shareable state in the URL (so a filtered view can be bookmarked) ---- */
+const NUM_KEYS = ['priceMin', 'priceMax', 'rooms', 'areaMin', 'areaMax', 'lotMin', 'floorMin', 'yearMin', 'daysMax'];
+const CHECK_KEYS = ['hasBasement', 'hasElevator', 'hasBalcony', 'nearS', 'onlyCut'];
+function decodeState() {
+  const p = new URLSearchParams(location.search);
+  if (![...p.keys()].length) return;
+  const t = p.get('type'); if (t === 'condo' || t === 'villa') S.type = t;
+  if (p.get('muni')) {
+    const valid = p.get('muni').split(',').filter(s => S.meta.municipalities.some(m => m.slug === s));
+    if (valid.length) S.munis = new Set(valid);
+  }
+  if (p.get('q')) S.search = p.get('q').toLowerCase().trim();
+  NUM_KEYS.forEach(k => { const v = p.get(k); if (v != null && v !== '' && !isNaN(+v)) S[k] = +v; });
+  if (p.get('energyMin')) S.energyMin = p.get('energyMin');
+  CHECK_KEYS.forEach(k => { if (p.get(k) === '1') S[k] = true; });
+  if (p.get('sort')) S.sort = p.get('sort');
+  if (p.get('colorBy')) S.colorBy = p.get('colorBy');
+}
+function encodeState() {
+  if (!S.meta) return;
+  const p = new URLSearchParams();
+  if (S.type !== 'all') p.set('type', S.type);
+  if (S.munis.size && S.munis.size < S.meta.municipalities.length) p.set('muni', [...S.munis].join(','));
+  if (S.search) p.set('q', S.search);
+  NUM_KEYS.forEach(k => { if (S[k] != null) p.set(k, S[k]); });
+  if (S.energyMin) p.set('energyMin', S.energyMin);
+  CHECK_KEYS.forEach(k => { if (S[k]) p.set(k, '1'); });
+  if (S.sort !== 'd') p.set('sort', S.sort);
+  if (S.colorBy !== 'm2p') p.set('colorBy', S.colorBy);
+  const qs = p.toString();
+  try { history.replaceState(null, '', qs ? '?' + qs : location.pathname); } catch (e) { /* ignore */ }
+}
+function syncControlsFromState() {
+  [['#priceMin', 'priceMin'], ['#priceMax', 'priceMax'], ['#rooms', 'rooms'], ['#areaMin', 'areaMin'], ['#areaMax', 'areaMax'], ['#lotMin', 'lotMin'], ['#floorMin', 'floorMin'], ['#yearMin', 'yearMin'], ['#daysMax', 'daysMax'], ['#energyMin', 'energyMin'], ['#sort', 'sort'], ['#colorBy', 'colorBy']]
+    .forEach(([id, k]) => { if (S[k] != null) $(id).value = S[k]; });
+  CHECK_KEYS.forEach(k => { const elc = $('#' + k); if (elc) elc.checked = !!S[k]; });
+  $('#search').value = S.search || '';
+  [...$('#typeSeg').children].forEach(b => b.classList.toggle('active', b.dataset.type === S.type));
+  if (activeFilterCount()) $('#moreFilters').open = true;
 }
 
 /* ---- DAWA address autocomplete ---- */
@@ -231,6 +275,7 @@ function filtered() {
     if (S.hasBasement && !(r.bsm > 0)) return false;
     if (S.hasElevator && !r.elev) return false;
     if (S.hasBalcony && !r.balc) return false;
+    if (S.onlyCut && !(r.chg < 0)) return false;                    // only price-reduced
     if (S.A && haversine(r.lat, r.lon, S.A.lat, S.A.lon) > S.radA) return false;
     if (S.B && haversine(r.lat, r.lon, S.B.lat, S.B.lon) > S.radB) return false;
     if (S.search) {
@@ -261,6 +306,7 @@ function render() {
   renderTrendChart();
   drawMap(f);
   renderCards(f);
+  encodeState();
 }
 
 /* ===================== KPIs ===================== */
@@ -524,7 +570,7 @@ function lineChart(mount, xLabels, series, opt = {}) {
   const pts = xLabels.length;
   if (!pts || !series.some(s => s.values.some(v => v != null))) { mount.append(el('div', { class: 'loading' }, opt.empty || 'Ingen data endnu.')); return; }
   const W = 680, H = 260, padL = 46, padR = 14, padT = 12, padB = 30, plotW = W - padL - padR, plotH = H - padT - padB;
-  const all = series.flatMap(s => s.values).filter(v => v != null);
+  const all = series.flatMap(s => s.values).concat((opt.bands || []).flatMap(b => [...b.lo, ...b.hi])).filter(v => v != null);
   let lo = Math.min(...all), hi = Math.max(...all);
   if (opt.zeroBase) lo = Math.min(lo, 0);
   const span = (hi - lo) || 1; lo -= span * .06; hi += span * .06;
@@ -534,6 +580,20 @@ function lineChart(mount, xLabels, series, opt = {}) {
   for (let g = 0; g <= 4; g++) { const yv = lo + (hi - lo) * g / 4, y = Y(yv); svg.append(svel('line', { x1: padL, y1: y, x2: W - padR, y2: y, class: 'gridline' })); const t = svel('text', { x: padL - 6, y: y + 3, 'text-anchor': 'end', class: 'axis-txt' }); t.textContent = opt.yfmt ? opt.yfmt(yv) : Math.round(yv); svg.append(t); }
   // x ticks
   (opt.xticks || []).forEach(([i, lab]) => { const x = X(i); svg.append(svel('line', { x1: x, y1: padT, x2: x, y2: padT + plotH, class: 'gridline' })); const t = svel('text', { x, y: H - padB + 15, 'text-anchor': 'middle', class: 'axis-txt' }); t.textContent = lab; svg.append(t); });
+  // shaded quartile bands (behind the lines), broken across any gaps
+  (opt.bands || []).forEach(b => {
+    let seg = [];
+    const flush = () => {
+      if (seg.length > 1) {
+        const top = seg.map(i => `${X(i).toFixed(1)} ${Y(b.hi[i]).toFixed(1)}`);
+        const bot = seg.slice().reverse().map(i => `${X(i).toFixed(1)} ${Y(b.lo[i]).toFixed(1)}`);
+        svg.append(svel('path', { d: 'M' + top.join(' L') + ' L' + bot.join(' L') + ' Z', fill: b.color, opacity: 0.13, stroke: 'none' }));
+      }
+      seg = [];
+    };
+    for (let i = 0; i < pts; i++) { if (b.lo[i] != null && b.hi[i] != null) seg.push(i); else flush(); }
+    flush();
+  });
   series.forEach(s => {
     let d = '', started = false;
     s.values.forEach((v, i) => { if (v == null) { started = false; return; } d += (started ? ' L' : ' M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1); started = true; });
@@ -630,14 +690,26 @@ function renderTrendChart() {
   const scopeName = scope === 'all' ? 'hele korridoren' : (S.meta.municipalities.find(m => m.slug === scope) || {}).name;
   const dates = [...new Set(hist.filter(r => r.scope === scope).map(r => r.date))].sort();
   $('#trendSrc').textContent = '· ' + scopeName + (dates.length < 2 ? ' · bygges op fra ' + (dates[0] || '') : ' · vores daglige målinger');
-  const pick = (t, d) => { const row = hist.find(r => r.scope === scope && r.type === t && r.date === d); return row ? row[metric] : null; };
-  const series = [];
-  if (S.type !== 'villa') series.push({ name: 'Ejerlejlighed', color: cssVar('--condo'), values: dates.map(d => pick('condo', d)) });
-  if (S.type !== 'condo') series.push({ name: 'Villa/hus', color: cssVar('--villa'), values: dates.map(d => pick('villa', d)) });
-  const fmt = metric === 'medM2' ? m2 : metric === 'medPrice' ? krM : metric === 'pctCut' ? (v => Math.round(v) + ' %') : metric === 'medDays' ? (v => Math.round(v) + ' dage') : num;
+  const rowOf = (t, d) => hist.find(r => r.scope === scope && r.type === t && r.date === d);
+  const pick = (t, d) => {
+    const row = rowOf(t, d); if (!row) return null;
+    // "premium" = how much dearer, per m², homes near an S-train are vs. farther out
+    if (metric === 'premium') return (row.medM2Near && row.medM2Far) ? Math.round((row.medM2Near / row.medM2Far - 1) * 100) : null;
+    return row[metric] != null ? row[metric] : null;
+  };
+  const bandFor = (t) => ({
+    color: t === 'villa' ? cssVar('--villa') : cssVar('--condo'),
+    lo: dates.map(d => { const r = rowOf(t, d); return r && r.q1M2 != null ? r.q1M2 : null; }),
+    hi: dates.map(d => { const r = rowOf(t, d); return r && r.q3M2 != null ? r.q3M2 : null; }),
+  });
+  const series = [], bands = [];
+  if (S.type !== 'villa') { series.push({ name: 'Ejerlejlighed', color: cssVar('--condo'), values: dates.map(d => pick('condo', d)) }); if (metric === 'medM2') bands.push(bandFor('condo')); }
+  if (S.type !== 'condo') { series.push({ name: 'Villa/hus', color: cssVar('--villa'), values: dates.map(d => pick('villa', d)) }); if (metric === 'medM2') bands.push(bandFor('villa')); }
+  const fmt = metric === 'premium' ? (v => (v >= 0 ? '+' : '') + Math.round(v) + ' %') : metric === 'medM2' ? m2 : metric === 'medPrice' ? krM : metric === 'pctCut' ? (v => Math.round(v) + ' %') : metric === 'medDays' ? (v => Math.round(v) + ' dage') : num;
   const xlab = dates.map(d => new Date(d).toLocaleDateString('da-DK', { day: 'numeric', month: 'short' }));
   const note = dates.length < 2 ? 'Historikken bygges op fra i dag — kom tilbage om nogle dage for at se udviklingen i liggetid og prisnedsættelser.' : '';
-  lineChart(mount, xlab, series, { legend: true, yfmt: fmt, tfmt: fmt, empty: note, xticks: dates.length > 6 ? [[0, xlab[0]], [dates.length - 1, xlab[dates.length - 1]]] : [] });
+  lineChart(mount, xlab, series, { legend: true, yfmt: fmt, tfmt: fmt, empty: note, bands, xticks: dates.length > 6 ? [[0, xlab[0]], [dates.length - 1, xlab[dates.length - 1]]] : [] });
+  if (metric === 'medM2' && dates.length >= 2) mount.append(el('p', { class: 'chart-note' }, 'Skygget felt = midterste 50 % (kvartiler). Linjen er medianen.'));
   if (note && dates.length === 1) mount.append(el('p', { class: 'chart-note' }, note));
 }
 
@@ -889,8 +961,30 @@ function renderMapLegend(colorBy, f, lineColors) {
 function legItem(color, text) { return el('span', { class: 'legend-item' }, el('span', { class: 'swatch', style: `background:${color}` }), text); }
 
 /* ===================== listing cards ===================== */
+// robust z-score of each home's kr/m² within its (kommune, type) group — memoized
+let _zMap = null;
+function zMap() {
+  if (_zMap) return _zMap;
+  _zMap = new Map();
+  const groups = new Map();
+  S.all.forEach(r => { if (!r.m2p) return; const k = r.muni + '|' + r.t; (groups.get(k) || groups.set(k, []).get(k)).push(r); });
+  groups.forEach(rows => {
+    if (rows.length < 8) return;
+    const vals = rows.map(r => r.m2p), med = median(vals), mad = median(vals.map(v => Math.abs(v - med))), sig = 1.4826 * mad;
+    if (!sig) return;
+    rows.forEach(r => _zMap.set(r.id, (r.m2p - med) / sig));
+  });
+  return _zMap;
+}
+// "possible bargain" score: cheap per m² for its area, bonus for a recent price
+// cut and for being near an S-train.
+function fundScore(r) {
+  const z = zMap().get(r.id);
+  if (z == null) return -Infinity;
+  return -z + (r.chg < 0 ? 0.6 : 0) + (r.near ? 0.3 : 0);
+}
 function sortRows(f) {
-  const cmp = { d: (a, b) => a.d - b.d, m2p: (a, b) => a.m2p - b.m2p, m2p_desc: (a, b) => b.m2p - a.m2p, p: (a, b) => a.p - b.p, p_desc: (a, b) => b.p - a.p, sst: (a, b) => a.sst - b.sst, chg: (a, b) => (a.chg || 0) - (b.chg || 0) }[S.sort];
+  const cmp = { d: (a, b) => a.d - b.d, m2p: (a, b) => a.m2p - b.m2p, m2p_desc: (a, b) => b.m2p - a.m2p, p: (a, b) => a.p - b.p, p_desc: (a, b) => b.p - a.p, sst: (a, b) => a.sst - b.sst, chg: (a, b) => (a.chg || 0) - (b.chg || 0), fund: (a, b) => fundScore(b) - fundScore(a) }[S.sort];
   return [...f].sort(cmp);
 }
 // Per-listing change log (data/tracker.json) — loaded lazily after first paint
