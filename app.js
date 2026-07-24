@@ -8,7 +8,7 @@ const S = {
   lotMin: null, floorMin: null, yearMin: null, daysMax: null, energyMin: null,
   hasBasement: false, hasElevator: false, hasBalcony: false,
   search: '', colorBy: 'm2p', sort: 'd', shown: 60, showRail: true, trackerMap: null, onlyCut: false,
-  favs: {}, onlyFav: false, cmpA: null, cmpB: null,
+  favs: {}, onlyFav: false, cmpA: null, cmpB: null, onlyNew: false,
   A: null, B: null, radA: 3, radB: 3,   // home/work points {name,lat,lon}
   dstArea: '01', indexMode: 'krm2', bvc: null,
 };
@@ -96,14 +96,14 @@ function initUI() {
   chipKb(allBtn, () => {
     const allOn = S.munis.size === S.meta.municipalities.length;
     S.munis = new Set(allOn ? [] : S.meta.municipalities.map(m => m.slug));
-    S.shown = 60; autoFollowDstArea(); render(); fitToSelection();
+    S.shown = 60; autoFollowDstArea(); autoFollowCompare(); render(); fitToSelection();
   });
   wrap.append(allBtn);
   S.meta.municipalities.forEach(m => {
     const c = el('span', { class: 'chip on' }, m.name);
     chipKb(c, () => {
       if (S.munis.has(m.slug)) S.munis.delete(m.slug); else S.munis.add(m.slug);
-      S.shown = 60; autoFollowDstArea(); render(); fitToSelection();
+      S.shown = 60; autoFollowDstArea(); autoFollowCompare(); render(); fitToSelection();
     });
     c._slug = m.slug; wrap.append(c);
   });
@@ -118,7 +118,7 @@ function initUI() {
   on('#floorMin', 'floorMin', 1); on('#yearMin', 'yearMin', 1); on('#daysMax', 'daysMax', 1);
   on('#energyMin', 'energyMin'); on('#hasBasement', 'hasBasement'); on('#hasElevator', 'hasElevator');
   on('#hasBalcony', 'hasBalcony'); on('#colorBy', 'colorBy'); on('#sort', 'sort');
-  on('#nearS', 'nearS'); on('#onlyCut', 'onlyCut'); on('#onlyFav', 'onlyFav');
+  on('#nearS', 'nearS'); on('#onlyCut', 'onlyCut'); on('#onlyFav', 'onlyFav'); on('#onlyNew', 'onlyNew');
   $('#showRail').addEventListener('change', e => { S.showRail = e.target.checked; applyRailVisibility(); renderMapLegend(S.colorBy, filtered(), LINE_COLORS()); });
   $('#search').addEventListener('input', e => {
     S.search = e.target.value.toLowerCase().trim(); S.shown = 60; render();
@@ -181,26 +181,27 @@ function initUI() {
   });
 
   autoFollowDstArea();       // point the price-index area at the selected kommuner
+  autoFollowCompare();       // default the compare card to a 2-kommune selection
   syncControlsFromState();   // reflect any URL-provided filters in the controls
 }
 
 function resetFilters() {
   Object.assign(S, { priceMin: null, priceMax: null, rooms: null, areaMin: null, areaMax: null, lotMin: null,
-    floorMin: null, yearMin: null, daysMax: null, energyMin: null, hasBasement: false, hasElevator: false, hasBalcony: false, onlyCut: false });
+    floorMin: null, yearMin: null, daysMax: null, energyMin: null, hasBasement: false, hasElevator: false, hasBalcony: false, onlyCut: false, onlyNew: false });
   ['#priceMin', '#priceMax', '#rooms', '#areaMin', '#areaMax', '#lotMin', '#floorMin', '#yearMin', '#daysMax', '#energyMin'].forEach(id => $(id).value = '');
-  ['#hasBasement', '#hasElevator', '#hasBalcony', '#onlyCut'].forEach(id => $(id).checked = false);
+  ['#hasBasement', '#hasElevator', '#hasBalcony', '#onlyCut', '#onlyNew'].forEach(id => $(id).checked = false);
   S.shown = 60; render();
 }
 function activeFilterCount() {
   let n = 0;
   ['priceMin', 'priceMax', 'rooms', 'areaMin', 'areaMax', 'lotMin', 'floorMin', 'yearMin', 'daysMax', 'energyMin'].forEach(k => { if (S[k]) n++; });
-  ['hasBasement', 'hasElevator', 'hasBalcony', 'onlyCut'].forEach(k => { if (S[k]) n++; });
+  ['hasBasement', 'hasElevator', 'hasBalcony', 'onlyCut', 'onlyNew'].forEach(k => { if (S[k]) n++; });
   return n;
 }
 
 /* ---- shareable state in the URL (so a filtered view can be bookmarked) ---- */
 const NUM_KEYS = ['priceMin', 'priceMax', 'rooms', 'areaMin', 'areaMax', 'lotMin', 'floorMin', 'yearMin', 'daysMax'];
-const CHECK_KEYS = ['hasBasement', 'hasElevator', 'hasBalcony', 'nearS', 'onlyCut'];
+const CHECK_KEYS = ['hasBasement', 'hasElevator', 'hasBalcony', 'nearS', 'onlyCut', 'onlyNew'];
 function decodeState() {
   const p = new URLSearchParams(location.search);
   if (![...p.keys()].length) return;
@@ -280,6 +281,7 @@ function setupGeo(which) {
 }
 
 /* ===================== filtering ===================== */
+const NEW_DAYS = 14;   // "Ny på markedet" = on the market at most this many days
 function filtered() {
   return S.all.filter(r => {
     if (S.type !== 'all' && r.t !== S.type) return false;
@@ -299,6 +301,7 @@ function filtered() {
     if (S.hasElevator && !r.elev) return false;
     if (S.hasBalcony && !r.balc) return false;
     if (S.onlyCut && !(r.chg < 0)) return false;                    // only price-reduced
+    if (S.onlyNew && !(r.d != null && r.d <= NEW_DAYS)) return false; // only new listings
     if (S.onlyFav && !S.favs[String(r.id)]) return false;           // only saved homes
     if (S.A && haversine(r.lat, r.lon, S.A.lat, S.A.lon) > S.radA) return false;
     if (S.B && haversine(r.lat, r.lon, S.B.lat, S.B.lon) > S.radB) return false;
@@ -445,6 +448,29 @@ function renderMuniStats() {
     stat('S-togspræmie', s.premium != null ? (s.premium >= 0 ? '+' : '') + s.premium + ' %' : '–'));
   box.append(el('div', { class: 'kstats-head' }, el('b', {}, name), el('span', { class: 'src' }, ' · ' + (S.type === 'all' ? 'alle boligtyper' : S.type === 'condo' ? 'ejerlejligheder' : 'villaer'))));
   box.append(wrap);
+  // rooms + energy-label mix for the selected kommune
+  const rows = S.all.filter(r => r.muni === muniSel && (S.type === 'all' || r.t === S.type));
+  const ramp = seqRamp();
+  const roomsE = [['1 vær', r => (r.r || 0) <= 1], ['2', r => r.r === 2], ['3', r => r.r === 3], ['4', r => r.r === 4], ['5+', r => (r.r || 0) >= 5]]
+    .map((d, i) => ({ label: d[0], count: rows.filter(d[1]).length, color: ramp[i + 1] }));
+  const eCol = ['#1a9e5f', '#5bbf4a', '#a7d234', '#f5c518', '#f39325', '#e5622d', '#d0342c'];
+  const energyE = ['a', 'b', 'c', 'd', 'e', 'f', 'g']
+    .map((l, i) => ({ label: l.toUpperCase(), count: rows.filter(r => String(r.e || '').toLowerCase().startsWith(l)).length, color: eCol[i] }));
+  const blk = (title, entries) => el('div', { class: 'dist-block' }, el('div', { class: 'dist-title' }, title), distBar(entries));
+  box.append(el('div', { class: 'dist-wrap' }, blk('Værelser', roomsE), blk('Energimærke', energyE)));
+}
+// segmented proportion bar for a small distribution
+function distBar(entries) {
+  const total = entries.reduce((a, e) => a + e.count, 0) || 1;
+  const bar = el('div', { class: 'distbar' });
+  entries.forEach(e => {
+    if (!e.count) return;
+    const pct = e.count / total;
+    const seg = el('span', { class: 'distseg', style: `width:${(pct * 100).toFixed(1)}%;background:${e.color}`, title: `${e.label}: ${e.count} (${Math.round(pct * 100)} %)` });
+    if (pct > 0.1) seg.textContent = e.label;
+    bar.append(seg);
+  });
+  return bar;
 }
 
 function renderDistChart(f) {
@@ -753,6 +779,13 @@ function autoFollowDstArea() {
     if (S.dstArea !== ld) { S.dstArea = ld; const sel = $('#dstArea'); if (sel) sel.value = ld; }
   }
 }
+// When exactly two kommuner are selected, default the compare card to those two.
+function autoFollowCompare() {
+  if (S.munis.size !== 2) return;
+  const [a, b] = [...S.munis];
+  S.cmpA = a; S.cmpB = b;
+  const sa = $('#cmpA'), sb = $('#cmpB'); if (sa) sa.value = a; if (sb) sb.value = b;
+}
 function renderIndexChart() {
   const mount = $('#chartIndex');
   if (S.indexMode === 'real' && S.bvc) return renderRealIndexChart(mount);
@@ -980,11 +1013,17 @@ function drawStations() {
 function drawBoundaries() {
   MAP.L.boundaries.clearLayers();
   const partial = S.munis.size > 0 && S.munis.size < S.meta.municipalities.length;
+  const choro = MAP._choro;
   S.meta.municipalities.forEach(m => {
     const g = S.geo[m.slug]; if (!g) return;
     const sel = S.munis.has(m.slug);
+    const choroFill = choro && choro.med[m.slug] != null;
     g.rings.forEach(ring => {
-      L.polygon(ring.map(p => [p[1], p[0]]), {
+      L.polygon(ring.map(p => [p[1], p[0]]), choro ? {
+        color: cssVar('--muted'), weight: sel ? 1.5 : 1, opacity: sel ? 0.7 : 0.3,
+        fill: choroFill && sel, fillColor: choroFill ? choro.scale(choro.med[m.slug]) : 'transparent', fillOpacity: choroFill && sel ? 0.72 : 0,
+        interactive: false,
+      } : {
         color: sel ? cssVar('--land-sel-edge') : cssVar('--muted'),
         weight: sel ? 2 : 1, opacity: partial ? (sel ? 0.95 : 0.28) : 0.5,
         fill: partial && sel, fillColor: cssVar('--condo'), fillOpacity: 0.07,
@@ -1012,6 +1051,7 @@ function drawListings(f) {
   MAP.f = f;
   let cAcc;
   if (S.colorBy === 'type') cAcc = r => r.t === 'villa' ? cssVar('--villa') : cssVar('--condo');
+  else if (S.colorBy === 'kommune') { const ch = MAP._choro; cAcc = r => (ch && ch.med[r.muni] != null) ? ch.scale(ch.med[r.muni]) : cssVar('--muted'); }
   else { const scale = makeScale(f.map(r => r[S.colorBy]).filter(v => v != null), S.colorBy === 'd'); cAcc = r => scale(r[S.colorBy]); }
   const rad = radiusForZoom(MAP.map.getZoom());
   f.forEach(r => {
@@ -1060,8 +1100,16 @@ function drawGeoPoints() {
   add(S.A, S.radA, '🏠'); add(S.B, S.radB, '💼');
 }
 
+// per-kommune median kr/m² choropleth (colour-by "kommune")
+function choroData(f) {
+  const byM = new Map();
+  f.forEach(r => { if (r.m2p) (byM.get(r.muni) || byM.set(r.muni, []).get(r.muni)).push(r.m2p); });
+  const med = {}; byM.forEach((arr, slug) => { const m = median(arr); if (m) med[slug] = Math.round(m); });
+  return { med, scale: makeScale(Object.values(med), false) };
+}
 function drawMap(f) {
   if (!MAP.inited) return;
+  MAP._choro = S.colorBy === 'kommune' ? choroData(f) : null;
   drawBoundaries();
   drawListings(f);
   drawGeoPoints();
@@ -1117,11 +1165,14 @@ function renderMapLegend(colorBy, f, lineColors) {
   const box = $('#mapLegend'); box.innerHTML = '';
   if (colorBy === 'type') box.append(legItem(cssVar('--condo'), 'Ejerlejlighed'), legItem(cssVar('--villa'), 'Villa'));
   else {
-    const vals = f.map(r => r[colorBy]).filter(v => v != null), lo = quantile(vals, .05), hi = quantile(vals, .95);
-    const fmt = colorBy === 'm2p' ? m2 : colorBy === 'p' ? krM : v => Math.round(v) + ' dage';
+    const vals = colorBy === 'kommune'
+      ? (MAP._choro ? Object.values(MAP._choro.med) : [])
+      : f.map(r => r[colorBy]).filter(v => v != null);
+    const lo = quantile(vals, .05), hi = quantile(vals, .95);
+    const fmt = colorBy === 'p' ? krM : colorBy === 'd' ? v => Math.round(v) + ' dage' : m2;
     const ramp = el('span', { class: 'ramp' }); let steps = seqRamp(); if (colorBy === 'd') steps = [...steps].reverse();
     steps.forEach(c => ramp.append(el('i', { style: `background:${c}` })));
-    const label = colorBy === 'm2p' ? 'Pris pr. m²' : colorBy === 'p' ? 'Pris' : 'Liggetid';
+    const label = colorBy === 'm2p' ? 'Pris pr. m²' : colorBy === 'p' ? 'Pris' : colorBy === 'kommune' ? 'Median pris/m² pr. kommune' : 'Liggetid';
     box.append(el('span', { class: 'legend-item' }, label + ':'), el('span', { class: 'legend-item' }, colorBy === 'd' ? 'kort' : fmt(lo)), ramp, el('span', { class: 'legend-item' }, colorBy === 'd' ? 'lang' : fmt(hi)));
   }
   if (S.showRail) S.meta.lines.forEach(L => box.append(el('span', { class: 'legend-item' }, el('span', { class: 'legend-line' + (L.corridor === 'kystbanen' ? ' dashed' : ''), style: `border-top-color:${lineColors[L.corridor]}` }), L.label)));
@@ -1203,6 +1254,7 @@ function card(r) {
   fav.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); toggleFav(r.id, r.p); renderCards(filtered()); });
   thumb.append(fav);
   thumb.append(el('span', { class: 'badge ' + r.t }, r.t === 'villa' ? 'Villa' : 'Ejerlejl.'));
+  if (r.d != null && r.d <= NEW_DAYS) thumb.append(el('span', { class: 'newbadge' }, 'Ny'));
   thumb.append(el('span', { class: 'stbadge' + (r.near ? ' near' : '') }, `${r.near ? '🚆 ' : ''}${r.ssn} · ${(r.sst / 1000).toLocaleString('da-DK', { maximumFractionDigits: 1 })} km`));
   a.append(thumb);
   const body = el('div', { class: 'body' });
