@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
-<link rel="stylesheet" href="styles.css?v=16">
+<link rel="stylesheet" href="styles.css?v=17">
 </head>
 <body>
 <div id="app">
@@ -196,6 +196,17 @@
 
     <div class="card wide">
       <div class="card-head">
+        <h2>Sammenlign to kommuner <span class="src">· følger den valgte boligtype</span></h2>
+        <div class="chart-controls">
+          <label>A <select id="cmpA"></select></label>
+          <label>B <select id="cmpB"></select></label>
+        </div>
+      </div>
+      <div id="cmpTable" class="cmp"></div>
+    </div>
+
+    <div class="card wide">
+      <div class="card-head">
         <h2>Prisafvigere <span class="src">· afvigelse fra eget områdes m²-pris (robust z-score)</span></h2>
         <div class="chart-controls">
           <label>Vis
@@ -213,6 +224,7 @@
   <section class="card list-card">
     <div class="card-head">
       <h2>Boliger <span id="listCount" class="count"></span></h2>
+      <label class="filter check"><input type="checkbox" id="onlyFav"> <span id="onlyFavLabel">Kun gemte</span></label>
       <label class="filter">
         <span>Sortér</span>
         <select id="sort">
@@ -241,7 +253,7 @@
 
 <div id="tooltip" class="tooltip" hidden></div>
 <script src="vendor/leaflet/leaflet.js"></script>
-<script src="app.js?v=16"></script>
+<script src="app.js?v=17"></script>
 <script>if('serviceWorker' in navigator){addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){});});}</script>
 </body>
 </html>

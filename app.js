@@ -8,6 +8,7 @@ const S = {
   lotMin: null, floorMin: null, yearMin: null, daysMax: null, energyMin: null,
   hasBasement: false, hasElevator: false, hasBalcony: false,
   search: '', colorBy: 'm2p', sort: 'd', shown: 60, showRail: true, trackerMap: null, onlyCut: false,
+  favs: {}, onlyFav: false, cmpA: null, cmpB: null,
   A: null, B: null, radA: 3, radB: 3,   // home/work points {name,lat,lon}
   dstArea: '01', indexMode: 'krm2', bvc: null,
 };
@@ -53,6 +54,7 @@ async function boot() {
     ]);
     S.meta = meta; S.all = listings; S.geo = geo; S.index = index; S.history = history; S.bvc = bvc;
     meta.municipalities.forEach(m => S.munis.add(m.slug));
+    S.favs = loadFavs();    // saved homes (device-local)
     decodeState();          // apply any filters carried in the URL
     initUI();
     initMap();
@@ -110,7 +112,7 @@ function initUI() {
   on('#floorMin', 'floorMin', 1); on('#yearMin', 'yearMin', 1); on('#daysMax', 'daysMax', 1);
   on('#energyMin', 'energyMin'); on('#hasBasement', 'hasBasement'); on('#hasElevator', 'hasElevator');
   on('#hasBalcony', 'hasBalcony'); on('#colorBy', 'colorBy'); on('#sort', 'sort');
-  on('#nearS', 'nearS'); on('#onlyCut', 'onlyCut');
+  on('#nearS', 'nearS'); on('#onlyCut', 'onlyCut'); on('#onlyFav', 'onlyFav');
   $('#showRail').addEventListener('change', e => { S.showRail = e.target.checked; applyRailVisibility(); renderMapLegend(S.colorBy, filtered(), LINE_COLORS()); });
   $('#search').addEventListener('input', e => {
     S.search = e.target.value.toLowerCase().trim(); S.shown = 60; render();
@@ -138,6 +140,19 @@ function initUI() {
   });
   $('#trendMetric').addEventListener('change', renderTrendChart);
   $('#outlierSide').addEventListener('change', () => renderOutliers(filtered()));
+
+  // compare two kommuner
+  const munis = S.meta.municipalities;
+  const has = s => munis.some(m => m.slug === s);
+  S.cmpA = has('koebenhavn') ? 'koebenhavn' : munis[0].slug;
+  S.cmpB = has('gentofte') ? 'gentofte' : (munis[1] || munis[0]).slug;
+  [['#cmpA', 'cmpA'], ['#cmpB', 'cmpB']].forEach(([id, key]) => {
+    const sel = $(id);
+    munis.forEach(m => sel.append(el('option', { value: m.slug }, m.name)));
+    sel.value = S[key];
+    sel.addEventListener('change', e => { S[key] = e.target.value; renderCompare(); });
+  });
+  const favN = Object.keys(S.favs).length; if (favN) $('#onlyFavLabel').textContent = `Kun gemte (${favN})`;
 
   // (map pan / zoom / double-click zoom is native Leaflet)
 
@@ -276,6 +291,7 @@ function filtered() {
     if (S.hasElevator && !r.elev) return false;
     if (S.hasBalcony && !r.balc) return false;
     if (S.onlyCut && !(r.chg < 0)) return false;                    // only price-reduced
+    if (S.onlyFav && !S.favs[String(r.id)]) return false;           // only saved homes
     if (S.A && haversine(r.lat, r.lon, S.A.lat, S.A.lon) > S.radA) return false;
     if (S.B && haversine(r.lat, r.lon, S.B.lat, S.B.lon) > S.radB) return false;
     if (S.search) {
@@ -304,6 +320,7 @@ function render() {
   renderOutliers(f);
   renderIndexChart();
   renderTrendChart();
+  renderCompare();
   drawMap(f);
   renderCards(f);
   encodeState();
@@ -713,6 +730,49 @@ function renderTrendChart() {
   if (note && dates.length === 1) mount.append(el('p', { class: 'chart-note' }, note));
 }
 
+/* ===================== compare two kommuner ===================== */
+function kmStats(slug) {
+  const rows = S.all.filter(r => r.muni === slug && (S.type === 'all' || r.t === S.type));
+  const m2 = rows.map(r => r.m2p).filter(Boolean), pr = rows.map(r => r.p).filter(Boolean), dd = rows.map(r => r.d).filter(v => v != null);
+  const near = rows.filter(r => r.near).map(r => r.m2p).filter(Boolean), far = rows.filter(r => !r.near).map(r => r.m2p).filter(Boolean);
+  const cuts = rows.filter(r => r.chg < 0).length;
+  return {
+    n: rows.length,
+    medPrice: pr.length ? median(pr) : null,
+    medM2: m2.length ? median(m2) : null,
+    medDays: dd.length ? median(dd) : null,
+    pctCut: rows.length ? Math.round(cuts / rows.length * 100) : null,
+    premium: (near.length && far.length) ? Math.round((median(near) / median(far) - 1) * 100) : null,
+  };
+}
+function renderCompare() {
+  const box = $('#cmpTable'); if (!box || !S.cmpA || !S.cmpB) return;
+  const names = Object.fromEntries(S.meta.municipalities.map(m => [m.slug, m.name]));
+  const A = kmStats(S.cmpA), B = kmStats(S.cmpB);
+  const pct = v => v == null ? '–' : (v >= 0 ? '+' : '') + v + ' %';
+  const rows = [
+    ['Antal til salg', A.n, B.n, num, 0],
+    ['Median pris', A.medPrice, B.medPrice, krM, -1],
+    ['Median pris/m²', A.medM2, B.medM2, m2, -1],
+    ['Median liggetid', A.medDays, B.medDays, v => Math.round(v) + ' dage', -1],
+    ['Prisnedsættelser', A.pctCut, B.pctCut, v => v == null ? '–' : v + ' %', 0],
+    ['S-togspræmie', A.premium, B.premium, pct, 0],
+  ];
+  const t = el('table', { class: 'cmp-table' });
+  t.append(el('thead', {}, el('tr', {}, el('th', {}, ''), el('th', {}, names[S.cmpA] || S.cmpA), el('th', {}, names[S.cmpB] || S.cmpB))));
+  const tb = el('tbody');
+  rows.forEach(([label, a, b, fmt, dir]) => {
+    // dir<0 → lower value is the "cheaper/faster" one; highlight it green
+    let aCls = '', bCls = '';
+    if (dir < 0 && a != null && b != null && a !== b) { (a < b ? (aCls = 'good') : (bCls = 'good')); }
+    tb.append(el('tr', {},
+      el('td', { class: 'cmp-l' }, label),
+      el('td', { class: aCls }, a == null ? '–' : fmt(a)),
+      el('td', { class: bCls }, b == null ? '–' : fmt(b))));
+  });
+  t.append(tb); box.innerHTML = ''; box.append(t);
+}
+
 /* ===================== colour scales ===================== */
 function seqRamp() { return ['--seq-1', '--seq-2', '--seq-3', '--seq-4', '--seq-5', '--seq-6'].map(cssVar); }
 function makeScale(vals, invert) {
@@ -997,6 +1057,18 @@ function loadTracker() {
 }
 const MONTHS_DA = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
 function fmtDay(iso) { if (!iso) return ''; const [, m, d] = iso.split('-'); return `${+d}. ${MONTHS_DA[+m - 1]}`; }
+
+/* ---- saved homes (favourites) — device-local via localStorage ---- */
+function loadFavs() { try { return JSON.parse(localStorage.getItem('btFavs') || '{}'); } catch (e) { return {}; } }
+function saveFavs() { try { localStorage.setItem('btFavs', JSON.stringify(S.favs)); } catch (e) { /* ignore */ } }
+function isFav(id) { return !!S.favs[String(id)]; }
+function toggleFav(id, price) {
+  id = String(id);
+  if (S.favs[id]) delete S.favs[id]; else S.favs[id] = { p: price || null, at: Date.now() };
+  saveFavs();
+  const n = Object.keys(S.favs).length;
+  const lbl = $('#onlyFavLabel'); if (lbl) lbl.textContent = n ? `Kun gemte (${n})` : 'Kun gemte';
+}
 // tiny inline sparkline of a listing's observed asking prices
 function priceSpark(events) {
   const ps = events.map(e => e[1]).filter(v => v != null);
@@ -1018,6 +1090,9 @@ function renderCards(f) {
 function card(r) {
   const a = el('a', { class: 'lcard', href: r.url || '#', target: '_blank', rel: 'noopener' });
   const thumb = el('div', { class: 'thumb' }); if (r.img) thumb.style.backgroundImage = `url("${r.img}")`;
+  const fav = el('button', { class: 'fav' + (isFav(r.id) ? ' on' : ''), type: 'button', title: isFav(r.id) ? 'Fjern fra gemte' : 'Gem bolig', 'aria-label': 'Gem bolig' }, isFav(r.id) ? '♥' : '♡');
+  fav.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); toggleFav(r.id, r.p); renderCards(filtered()); });
+  thumb.append(fav);
   thumb.append(el('span', { class: 'badge ' + r.t }, r.t === 'villa' ? 'Villa' : 'Ejerlejl.'));
   thumb.append(el('span', { class: 'stbadge' + (r.near ? ' near' : '') }, `${r.near ? '🚆 ' : ''}${r.ssn} · ${(r.sst / 1000).toLocaleString('da-DK', { maximumFractionDigits: 1 })} km`));
   a.append(thumb);
@@ -1040,6 +1115,13 @@ function card(r) {
     meta.append(el('span', { class: 'commute-dist' }, parts.join(' · ')));
   }
   body.append(meta);
+  // if you saved this home and its asking price has changed since, flag it
+  const fv = S.favs[String(r.id)];
+  if (fv && fv.p && r.p && fv.p !== r.p) {
+    const delta = r.p - fv.p;
+    body.append(el('div', { class: 'fav-change ' + (delta < 0 ? 'down' : 'up') },
+      `${delta < 0 ? '↘' : '↗'} ${(delta < 0 ? '−' : '+') + Math.abs(delta).toLocaleString('da-DK')} kr siden du gemte den`));
+  }
   // observed price trajectory since we started following this listing
   const tk = S.trackerMap && S.trackerMap.get(String(r.id));
   if (tk && tk.events && tk.events.length >= 2) {
