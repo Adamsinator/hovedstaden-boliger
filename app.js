@@ -86,8 +86,14 @@ function initUI() {
 
   // municipality chips
   const wrap = $('#muniChips');
+  // make a chip behave like a button for both mouse and keyboard users
+  const chipKb = (elm, fn) => {
+    elm.setAttribute('role', 'button'); elm.tabIndex = 0;
+    elm.addEventListener('click', fn);
+    elm.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } });
+  };
   const allBtn = el('span', { class: 'chip allbtn on' }, 'Alle kommuner');
-  allBtn.addEventListener('click', () => {
+  chipKb(allBtn, () => {
     const allOn = S.munis.size === S.meta.municipalities.length;
     S.munis = new Set(allOn ? [] : S.meta.municipalities.map(m => m.slug));
     S.shown = 60; render(); fitToSelection();
@@ -95,7 +101,7 @@ function initUI() {
   wrap.append(allBtn);
   S.meta.municipalities.forEach(m => {
     const c = el('span', { class: 'chip on' }, m.name);
-    c.addEventListener('click', () => {
+    chipKb(c, () => {
       if (S.munis.has(m.slug)) S.munis.delete(m.slug); else S.munis.add(m.slug);
       S.shown = 60; render(); fitToSelection();
     });
@@ -305,8 +311,9 @@ function filtered() {
 /* ===================== master render ===================== */
 function render() {
   [...$('#muniChips').children].forEach(c => {
-    if (c._slug) c.classList.toggle('on', S.munis.has(c._slug));
-    else c.classList.toggle('on', S.munis.size === S.meta.municipalities.length);
+    const on = c._slug ? S.munis.has(c._slug) : S.munis.size === S.meta.municipalities.length;
+    c.classList.toggle('on', on);
+    c.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
   const fc = activeFilterCount();
   $('#filterCount').textContent = fc ? `(${fc} aktive)` : '';
@@ -342,7 +349,7 @@ function renderKPIs(f) {
     { label: 'Median liggetid', val: median(days) != null ? Math.round(median(days)) + ' <small>dage</small>' : '–', sub: 'til salg på boligsiden', html: true },
     { label: 'Med prisnedsættelse', val: cutPct + ' <small>%</small>', sub: nearPct + ' % ligger nær S-tog', html: true },
   ];
-  const box = $('#kpis'); box.innerHTML = '';
+  const box = $('#kpis'); box.innerHTML = ''; box.removeAttribute('aria-busy');
   kpis.forEach(k => box.append(el('div', { class: 'kpi' },
     el('div', { class: 'k-label' }, k.label),
     el('div', { class: 'k-val', html: k.val }),
@@ -383,10 +390,12 @@ function vbars(mount, rows, opt = {}) {
   rows.forEach((r, i) => {
     const h = r.value / max * plotH, x = padL + i * bw, y = padT + plotH - h;
     const g = svel('g');
-    g.append(svel('rect', { x: x + bw * .16, y, width: bw * .68, height: h, rx: 4, fill: r.color || typeColor() }));
-    if (opt.topLabels !== false) { const vt = svel('text', { x: x + bw / 2, y: y - 5, 'text-anchor': 'middle', class: 'bar-val' }); vt.textContent = yfmt(r.value); g.append(vt); }
+    const dim = opt.selected != null && r.label !== opt.selected;
+    g.append(svel('rect', { x: x + bw * .16, y, width: bw * .68, height: h, rx: 4, fill: r.color || typeColor(), opacity: dim ? 0.32 : 1 }));
+    if (opt.topLabels !== false) { const vt = svel('text', { x: x + bw / 2, y: y - 5, 'text-anchor': 'middle', class: 'bar-val', opacity: dim ? 0.4 : 1 }); vt.textContent = yfmt(r.value); g.append(vt); }
     g.addEventListener('mousemove', e => showTip(opt.tip ? opt.tip(r) : `<div class="tt-title">${r.label}</div><div class="tt-row"><span>${opt.vlabel || 'Værdi'}</span><b>${fmt(r.value)}</b></div>${r.n != null ? `<div class="tt-row"><span>Antal boliger</span><b>${r.n}</b></div>` : ''}`, e.clientX, e.clientY));
     g.addEventListener('mouseleave', hideTip);
+    if (opt.onBar) { g.style.cursor = 'pointer'; g.addEventListener('click', () => opt.onBar(r)); }
     svg.append(g);
     const lx = x + bw / 2, ly = H - padB + 15;
     const lt = svel('text', { x: lx, y: ly, class: 'axis-txt' }); lt.textContent = r.label;
@@ -397,15 +406,42 @@ function vbars(mount, rows, opt = {}) {
   mount.append(svg);
 }
 
-// Vertical columns, one per kommune — the (long) names angled so all ~14 fit
-// across the wide card.
+// Vertical columns, one per kommune — the (long) names angled so all ~14 fit.
+// Click a column to see that kommune's key numbers below the chart.
+let muniSel = null;
 function renderMuniChart(f) {
   const byM = new Map();
   f.forEach(r => { (byM.get(r.muni) || byM.set(r.muni, []).get(r.muni)).push(r.m2p); });
   const names = Object.fromEntries(S.meta.municipalities.map(m => [m.slug, m.name]));
-  const rows = [...byM.entries()].map(([slug, arr]) => ({ label: names[slug] || slug, value: Math.round(median(arr.filter(Boolean))), n: arr.length }))
+  const slugOf = Object.fromEntries(S.meta.municipalities.map(m => [m.name, m.slug]));
+  const rows = [...byM.entries()].map(([slug, arr]) => ({ label: names[slug] || slug, slug, value: Math.round(median(arr.filter(Boolean))), n: arr.length }))
     .filter(r => r.value).sort((a, b) => b.value - a.value);
-  vbars($('#chartMuni'), rows, { W: 760, padB: 82, angle: -40, yfmt: kc, fmt: m2, vlabel: 'Median pris/m²' });
+  if (muniSel && !rows.some(r => r.slug === muniSel)) muniSel = null;   // drop if filtered out
+  const selLabel = muniSel ? (names[muniSel] || muniSel) : null;
+  vbars($('#chartMuni'), rows, {
+    W: 760, padB: 82, angle: -40, yfmt: kc, fmt: m2, vlabel: 'Median pris/m²', selected: selLabel,
+    onBar: r => { muniSel = (muniSel === r.slug) ? null : r.slug; renderMuniChart(f); renderMuniStats(); },
+  });
+  renderMuniStats();
+}
+function renderMuniStats() {
+  const box = $('#chartMuniStats'); if (!box) return;
+  box.innerHTML = '';
+  if (!muniSel) { box.append(el('p', { class: 'chart-note' }, 'Klik på en kommune for at se gennemsnit for pris, størrelse, liggetid m.m.')); return; }
+  const name = (S.meta.municipalities.find(m => m.slug === muniSel) || {}).name || muniSel;
+  const s = kmStats(muniSel);
+  const stat = (label, val) => el('div', { class: 'kstat' }, el('div', { class: 'kstat-v' }, val), el('div', { class: 'kstat-l' }, label));
+  const wrap = el('div', { class: 'kstats' },
+    stat('Antal til salg', num(s.n)),
+    stat('Median pris', s.medPrice != null ? krM(s.medPrice) : '–'),
+    stat('Median pris/m²', s.medM2 != null ? m2(s.medM2) : '–'),
+    stat('Gns. størrelse', s.avgSize != null ? Math.round(s.avgSize) + ' m²' : '–'),
+    stat('Median liggetid', s.medDays != null ? Math.round(s.medDays) + ' dage' : '–'),
+    stat('Nær S-tog', s.nearPct != null ? s.nearPct + ' %' : '–'),
+    stat('Prisnedsat', s.pctCut != null ? s.pctCut + ' %' : '–'),
+    stat('S-togspræmie', s.premium != null ? (s.premium >= 0 ? '+' : '') + s.premium + ' %' : '–'));
+  box.append(el('div', { class: 'kstats-head' }, el('b', {}, name), el('span', { class: 'src' }, ' · ' + (S.type === 'all' ? 'alle boligtyper' : S.type === 'condo' ? 'ejerlejligheder' : 'villaer'))));
+  box.append(wrap);
 }
 
 function renderDistChart(f) {
@@ -449,21 +485,30 @@ function renderScatter(f) {
   const mount = $('#chartScatter'); mount.innerHTML = '';
   const pts = f.filter(r => r.a > 0 && r.m2p > 0);
   if (pts.length < 5) { mount.append(el('div', { class: 'loading' }, 'For få boliger.')); return; }
-  const W = 640, H = 300, padL = 52, padR = 12, padT = 10, padB = 34;
+  const W = 640, H = 280, padL = 54, padR = 16, padT = 14, padB = 40;
   const plotW = W - padL - padR, plotH = H - padT - padB;
-  const xMax = Math.min(320, quantile(pts.map(r => r.a), .99));
-  const yMax = quantile(pts.map(r => r.m2p), .99);
-  const X = v => padL + Math.min(v, xMax) / xMax * plotW;
-  const Y = v => padT + plotH - Math.min(v, yMax) / yMax * plotH;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const areas = pts.map(r => r.a), m2s = pts.map(r => r.m2p);
+  // trimmed range + a margin, so the cloud sits inside the plot and doesn't
+  // pile up against the axes
+  // data range (what we draw) vs. axis domain (a margin wider), so the cloud
+  // sits inside the plot with clear space to every axis
+  const xd0 = quantile(areas, .01), xd1 = Math.min(360, quantile(areas, .99));
+  const yd0 = quantile(m2s, .02), yd1 = quantile(m2s, .98);
+  const xp = (xd1 - xd0) * 0.08 || 1, yp = (yd1 - yd0) * 0.10 || 1;
+  const xLo = Math.max(0, xd0 - xp), xHi = xd1 + xp, yLo = Math.max(0, yd0 - yp), yHi = yd1 + yp;
+  const xMax = xHi;   // used by the per-type trend binning below
+  const X = v => padL + (clamp(v, xLo, xHi) - xLo) / (xHi - xLo) * plotW;
+  const Y = v => padT + plotH - (clamp(v, yLo, yHi) - yLo) / (yHi - yLo) * plotH;
   const svg = svel('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img' });
   for (let g = 0; g <= 4; g++) {
-    const yv = yMax * g / 4, y = Y(yv);
+    const yv = yLo + (yHi - yLo) * g / 4, y = Y(yv);
     svg.append(svel('line', { x1: padL, y1: y, x2: W - padR, y2: y, class: 'gridline' }));
     const t = svel('text', { x: padL - 6, y: y + 3, 'text-anchor': 'end', class: 'axis-txt' });
     t.textContent = Math.round(yv / 1000) + 'k'; svg.append(t);
   }
   for (let g = 0; g <= 4; g++) {
-    const xv = xMax * g / 4, x = X(xv);
+    const xv = xLo + (xHi - xLo) * g / 4, x = X(xv);
     const t = svel('text', { x, y: H - padB + 15, 'text-anchor': 'middle', class: 'axis-txt' });
     t.textContent = Math.round(xv) + ' m²'; svg.append(t);
   }
@@ -474,8 +519,12 @@ function renderScatter(f) {
     transform: `rotate(-90 12 ${padT + plotH / 2})` });
   yt.textContent = 'Pris pr. m²'; svg.append(yt);
 
+  // draw only the in-range cloud; a few extreme homes are left off the scale so
+  // they don't pile up as a line of dots on the axes
+  const inRange = r => r.a >= xd0 && r.a <= xd1 && r.m2p >= yd0 && r.m2p <= yd1;
+  const shown = pts.filter(inRange), hidden = pts.length - shown.length;
   const gDots = svel('g', {});
-  pts.forEach(r => {
+  shown.forEach(r => {
     const c = svel('circle', { cx: X(r.a).toFixed(1), cy: Y(r.m2p).toFixed(1), r: 2.2,
       fill: r.t === 'villa' ? cssVar('--villa') : cssVar('--condo'), opacity: .45 });
     c._r = r; gDots.append(c);
@@ -529,8 +578,9 @@ function renderScatter(f) {
     'Hver prik er en bolig til salg lige nu — ikke en tidsserie. '
     + (bits.length ? `I det valgte udsnit: ${bits.join(', ')}. ` : '')
     + (stats.length > 1
-      ? 'Den samlede sky kan se flad ud, selvom hver boligtype for sig stiger: store boliger er oftere villaer, som har lavere m²-pris end lejligheder (sammensætningseffekt).'
-      : '')));
+      ? 'Den samlede sky kan se flad ud, selvom hver boligtype for sig stiger: store boliger er oftere villaer, som har lavere m²-pris end lejligheder (sammensætningseffekt). '
+      : '')
+    + (hidden > 0 ? `${hidden.toLocaleString('da-DK')} ekstreme boliger vises ikke (uden for skalaen).` : '')));
 }
 
 /* ============ outliers: robust z-score of kr/m² within kommune + type ============ */
@@ -734,13 +784,16 @@ function renderTrendChart() {
 function kmStats(slug) {
   const rows = S.all.filter(r => r.muni === slug && (S.type === 'all' || r.t === S.type));
   const m2 = rows.map(r => r.m2p).filter(Boolean), pr = rows.map(r => r.p).filter(Boolean), dd = rows.map(r => r.d).filter(v => v != null);
+  const areas = rows.map(r => r.a).filter(Boolean);
   const near = rows.filter(r => r.near).map(r => r.m2p).filter(Boolean), far = rows.filter(r => !r.near).map(r => r.m2p).filter(Boolean);
-  const cuts = rows.filter(r => r.chg < 0).length;
+  const cuts = rows.filter(r => r.chg < 0).length, nearN = rows.filter(r => r.near).length;
   return {
     n: rows.length,
     medPrice: pr.length ? median(pr) : null,
     medM2: m2.length ? median(m2) : null,
     medDays: dd.length ? median(dd) : null,
+    avgSize: areas.length ? areas.reduce((a, b) => a + b, 0) / areas.length : null,
+    nearPct: rows.length ? Math.round(nearN / rows.length * 100) : null,
     pctCut: rows.length ? Math.round(cuts / rows.length * 100) : null,
     premium: (near.length && far.length) ? Math.round((median(near) / median(far) - 1) * 100) : null,
   };
@@ -1083,14 +1136,14 @@ function priceSpark(events) {
 function renderCards(f) {
   const rows = sortRows(f);
   $('#listCount').textContent = '· ' + f.length.toLocaleString('da-DK');
-  const box = $('#cards'); box.innerHTML = '';
+  const box = $('#cards'); box.innerHTML = ''; box.removeAttribute('aria-busy');
   rows.slice(0, S.shown).forEach(r => box.append(card(r)));
   const more = $('#loadMore'); more.hidden = rows.length <= S.shown; more.textContent = `Vis flere (${(rows.length - S.shown).toLocaleString('da-DK')} tilbage)`;
 }
 function card(r) {
   const a = el('a', { class: 'lcard', href: r.url || '#', target: '_blank', rel: 'noopener' });
   const thumb = el('div', { class: 'thumb' }); if (r.img) thumb.style.backgroundImage = `url("${r.img}")`;
-  const fav = el('button', { class: 'fav' + (isFav(r.id) ? ' on' : ''), type: 'button', title: isFav(r.id) ? 'Fjern fra gemte' : 'Gem bolig', 'aria-label': 'Gem bolig' }, isFav(r.id) ? '♥' : '♡');
+  const fav = el('button', { class: 'fav' + (isFav(r.id) ? ' on' : ''), type: 'button', title: isFav(r.id) ? 'Fjern fra gemte' : 'Gem bolig', 'aria-label': isFav(r.id) ? 'Fjern fra gemte' : 'Gem bolig', 'aria-pressed': isFav(r.id) ? 'true' : 'false' }, isFav(r.id) ? '♥' : '♡');
   fav.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); toggleFav(r.id, r.p); renderCards(filtered()); });
   thumb.append(fav);
   thumb.append(el('span', { class: 'badge ' + r.t }, r.t === 'villa' ? 'Villa' : 'Ejerlejl.'));

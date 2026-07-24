@@ -17,13 +17,13 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
-<link rel="stylesheet" href="styles.css?v=17">
+<link rel="stylesheet" href="styles.css?v=18">
 </head>
 <body>
 <div id="app">
   <header class="topbar">
     <div class="brand">
-      <span class="brand-mark" aria-hidden="true"></span>
+      <img class="brand-mark" src="logo.svg?v=14" alt="Bolig Tracker" width="34" height="34">
       <div>
         <h1>Bolig Tracker</h1>
         <p class="tagline">Boligmarkedet fra København til Hillerød — langs S-toget</p>
@@ -102,7 +102,9 @@
     </details>
   </div>
 
-  <section class="kpis" id="kpis" aria-label="Nøgletal"></section>
+  <section class="kpis" id="kpis" aria-label="Nøgletal" aria-busy="true">
+    <div class="skeleton-tile"></div><div class="skeleton-tile"></div><div class="skeleton-tile"></div><div class="skeleton-tile"></div><div class="skeleton-tile"></div>
+  </section>
 
   <section class="grid">
     <div class="card map-card">
@@ -150,8 +152,9 @@
     </div>
 
     <div class="card wide">
-      <div class="card-head"><h2>Median pris pr. m² efter kommune</h2></div>
+      <div class="card-head"><h2>Median pris pr. m² efter kommune <span class="src">· klik en søjle for detaljer</span></h2></div>
       <div id="chartMuni" class="chart"></div>
+      <div id="chartMuniStats" class="muni-stats"></div>
     </div>
 
     <div class="card">
@@ -239,7 +242,10 @@
         </select>
       </label>
     </div>
-    <div id="cards" class="cards"></div>
+    <div id="cards" class="cards" aria-busy="true">
+      <div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card"></div>
+      <div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card"></div>
+    </div>
     <button id="loadMore" class="load-more" hidden>Vis flere</button>
   </section>
 
@@ -253,7 +259,7 @@
 
 <div id="tooltip" class="tooltip" hidden></div>
 <script src="vendor/leaflet/leaflet.js"></script>
-<script src="app.js?v=17"></script>
+<script src="app.js?v=18"></script>
 <script>if('serviceWorker' in navigator){addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){});});}</script>
 </body>
 </html>
