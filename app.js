@@ -714,7 +714,12 @@ function lineChart(mount, xLabels, series, opt = {}) {
   const svg = svel('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img' });
   for (let g = 0; g <= 4; g++) { const yv = lo + (hi - lo) * g / 4, y = Y(yv); svg.append(svel('line', { x1: padL, y1: y, x2: W - padR, y2: y, class: 'gridline' })); const t = svel('text', { x: padL - 6, y: y + 3, 'text-anchor': 'end', class: 'axis-txt' }); t.textContent = opt.yfmt ? opt.yfmt(yv) : Math.round(yv); svg.append(t); }
   // x ticks
-  (opt.xticks || []).forEach(([i, lab]) => { const x = X(i); svg.append(svel('line', { x1: x, y1: padT, x2: x, y2: padT + plotH, class: 'gridline' })); const t = svel('text', { x, y: H - padB + 15, 'text-anchor': 'middle', class: 'axis-txt' }); t.textContent = lab; svg.append(t); });
+  (opt.xticks || []).forEach(([i, lab]) => {
+    const x = X(i);
+    svg.append(svel('line', { x1: x, y1: padT, x2: x, y2: padT + plotH, class: 'gridline' }));
+    const anchor = x < padL + 14 ? 'start' : x > W - padR - 14 ? 'end' : 'middle';
+    const t = svel('text', { x, y: H - padB + 15, 'text-anchor': anchor, class: 'axis-txt' }); t.textContent = lab; svg.append(t);
+  });
   // shaded quartile bands (behind the lines), broken across any gaps
   (opt.bands || []).forEach(b => {
     let seg = [];
@@ -861,9 +866,21 @@ function renderTrendChart() {
   if (S.type !== 'villa') { series.push({ name: 'Ejerlejlighed', color: cssVar('--condo'), values: dates.map(d => pick('condo', d)) }); if (metric === 'medM2') bands.push(bandFor('condo')); }
   if (S.type !== 'condo') { series.push({ name: 'Villa/hus', color: cssVar('--villa'), values: dates.map(d => pick('villa', d)) }); if (metric === 'medM2') bands.push(bandFor('villa')); }
   const fmt = metric === 'premium' ? (v => (v >= 0 ? '+' : '') + Math.round(v) + ' %') : metric === 'medM2' ? m2 : metric === 'medPrice' ? krM : metric === 'pctCut' ? (v => Math.round(v) + ' %') : metric === 'medDays' ? (v => Math.round(v) + ' dage') : num;
-  const xlab = dates.map(d => new Date(d).toLocaleDateString('da-DK', { day: 'numeric', month: 'short' }));
+  // compact y-axis labels so they don't get clipped (tooltip keeps the full value)
+  const yfmt = metric === 'medM2' ? kc : metric === 'medPrice' ? (v => (v / 1e6).toLocaleString('da-DK', { maximumFractionDigits: 1 }) + ' mio.') : fmt;
+  // date labels: short when the range is within a year, else include the year
+  const spanDays = dates.length > 1 ? (new Date(dates[dates.length - 1]) - new Date(dates[0])) / 864e5 : 0;
+  const dfmt = spanDays > 330
+    ? d => new Date(d).toLocaleDateString('da-DK', { month: 'short', year: '2-digit' })
+    : d => new Date(d).toLocaleDateString('da-DK', { day: 'numeric', month: 'short' });
+  const xlab = dates.map(dfmt);
+  // show every date when there are few, otherwise ~6 evenly spaced (always incl. last)
+  const N = dates.length;
+  let idxs;
+  if (N <= 8) idxs = dates.map((_, i) => i);
+  else { const step = Math.ceil((N - 1) / 6); idxs = []; for (let i = 0; i < N; i += step) idxs.push(i); if (idxs[idxs.length - 1] !== N - 1) idxs.push(N - 1); }
   const note = dates.length < 2 ? 'Historikken bygges op fra i dag — kom tilbage om nogle dage for at se udviklingen i liggetid og prisnedsættelser.' : '';
-  lineChart(mount, xlab, series, { legend: true, yfmt: fmt, tfmt: fmt, empty: note, bands, xticks: dates.length > 6 ? [[0, xlab[0]], [dates.length - 1, xlab[dates.length - 1]]] : [] });
+  lineChart(mount, xlab, series, { legend: true, yfmt, tfmt: fmt, empty: note, bands, xticks: idxs.map(i => [i, xlab[i]]) });
   if (metric === 'medM2' && dates.length >= 2) mount.append(el('p', { class: 'chart-note' }, 'Skygget felt = midterste 50 % (kvartiler). Linjen er medianen.'));
   if (note && dates.length === 1) mount.append(el('p', { class: 'chart-note' }, note));
 }
