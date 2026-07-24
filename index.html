@@ -17,7 +17,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
-<link rel="stylesheet" href="styles.css?v=18">
+<link rel="stylesheet" href="styles.css?v=19">
 </head>
 <body>
 <div id="app">
@@ -222,6 +222,21 @@
       </div>
       <div id="outliers" class="outliers"></div>
     </div>
+
+    <div class="card wide">
+      <div class="card-head">
+        <h2>Prisændringer &amp; solgte <span class="src">· i det valgte udsnit</span></h2>
+        <div class="chart-controls">
+          <label>Vis
+            <select id="changeMode">
+              <option value="cut">Nedsatte priser</option>
+              <option value="sold">Solgt / fjernet</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div id="priceChanges" class="outliers"></div>
+    </div>
   </section>
 
   <section class="card list-card">
@@ -259,7 +274,7 @@
 
 <div id="tooltip" class="tooltip" hidden></div>
 <script src="vendor/leaflet/leaflet.js"></script>
-<script src="app.js?v=18"></script>
+<script src="app.js?v=19"></script>
 <script>if('serviceWorker' in navigator){addEventListener('load',function(){navigator.serviceWorker.register('sw.js').catch(function(){});});}</script>
 </body>
 </html>

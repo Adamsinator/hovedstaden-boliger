@@ -96,14 +96,14 @@ function initUI() {
   chipKb(allBtn, () => {
     const allOn = S.munis.size === S.meta.municipalities.length;
     S.munis = new Set(allOn ? [] : S.meta.municipalities.map(m => m.slug));
-    S.shown = 60; render(); fitToSelection();
+    S.shown = 60; autoFollowDstArea(); render(); fitToSelection();
   });
   wrap.append(allBtn);
   S.meta.municipalities.forEach(m => {
     const c = el('span', { class: 'chip on' }, m.name);
     chipKb(c, () => {
       if (S.munis.has(m.slug)) S.munis.delete(m.slug); else S.munis.add(m.slug);
-      S.shown = 60; render(); fitToSelection();
+      S.shown = 60; autoFollowDstArea(); render(); fitToSelection();
     });
     c._slug = m.slug; wrap.append(c);
   });
@@ -146,6 +146,7 @@ function initUI() {
   });
   $('#trendMetric').addEventListener('change', renderTrendChart);
   $('#outlierSide').addEventListener('change', () => renderOutliers(filtered()));
+  $('#changeMode').addEventListener('change', () => renderPriceChanges(filtered()));
 
   // compare two kommuner
   const munis = S.meta.municipalities;
@@ -179,6 +180,7 @@ function initUI() {
     refreshMapTheme(); render();
   });
 
+  autoFollowDstArea();       // point the price-index area at the selected kommuner
   syncControlsFromState();   // reflect any URL-provided filters in the controls
 }
 
@@ -325,6 +327,7 @@ function render() {
   renderYearChart(f);
   renderScatter(f);
   renderOutliers(f);
+  renderPriceChanges(f);
   renderIndexChart();
   renderTrendChart();
   renderCompare();
@@ -631,6 +634,45 @@ function renderOutliers(f) {
       : `Boliger mindst ${OUTLIER_Z.toLocaleString('da-DK')} robuste z-scores over deres eget område — typisk nybyg, penthouse eller vandudsigt.`));
 }
 
+/* ===== price changes & sold: reduced now (from boligsiden), sold builds up ===== */
+function renderPriceChanges(f) {
+  const box = $('#priceChanges'); if (!box) return; box.innerHTML = '';
+  const mode = $('#changeMode').value;
+  const names = Object.fromEntries(S.meta.municipalities.map(m => [m.slug, m.name]));
+  if (mode === 'cut') {
+    const rows = f.filter(r => r.chg < 0).sort((a, b) => a.chg - b.chg).slice(0, 12);
+    if (!rows.length) { box.append(el('div', { class: 'loading' }, 'Ingen prisnedsættelser i det valgte udsnit.')); return; }
+    rows.forEach(r => {
+      const a = el('a', { class: 'ol-row', href: r.url || '#', target: '_blank', rel: 'noopener' });
+      a.append(el('span', { class: 'ol-z lo' }, Math.round(r.chg) + ' %'));
+      a.append(el('span', { class: 'ol-main' }, el('b', {}, r.adr),
+        el('small', {}, `${names[r.muni] || r.muni} · ${r.t === 'villa' ? 'villa' : 'ejerlejl.'} · ${r.a} m² · ${r.r} vær.`)));
+      a.append(el('span', { class: 'ol-num' }, el('b', {}, krM(r.p)), el('small', {}, m2(r.m2p))));
+      a.append(el('span', { class: 'ol-num' }, el('b', {}, r.d + ' dage'), el('small', {}, r.near ? '🚆 nær S-tog' : '')));
+      box.append(a);
+    });
+    box.append(el('p', { class: 'chart-note' }, 'Boliger hvis udbudspris er sat ned (fra boligsiden). Vores egen tracker tilføjer datoerne for hver ændring, efterhånden som historikken bygges op.'));
+  } else {
+    if (!S.trackerMap) { box.append(el('div', { class: 'loading' }, 'Henter historik…')); return; }
+    const sel = new Set([...S.munis]);
+    const items = [...S.trackerMap.values()]
+      .filter(it => it.removed && (S.type === 'all' || it.t === S.type) && sel.has(it.muni))
+      .sort((a, b) => a.removed < b.removed ? 1 : -1).slice(0, 12);
+    if (!items.length) { box.append(el('div', { class: 'loading' }, 'Endnu ingen solgte/fjernede boliger registreret — bygges op fra i dag, efterhånden som annoncer forsvinder fra boligsiden.')); return; }
+    items.forEach(it => {
+      const lastP = it.events && it.events.length ? it.events[it.events.length - 1][1] : null;
+      const a = el('a', { class: 'ol-row', href: it.url || '#', target: '_blank', rel: 'noopener' });
+      a.append(el('span', { class: 'ol-z hi' }, 'fjernet'));
+      a.append(el('span', { class: 'ol-main' }, el('b', {}, it.adr || '—'),
+        el('small', {}, `${names[it.muni] || it.muni} · ${it.t === 'villa' ? 'villa' : 'ejerlejl.'}${it.a ? ` · ${it.a} m²` : ''}`)));
+      a.append(el('span', { class: 'ol-num' }, el('b', {}, lastP ? krM(lastP) : '–'), el('small', {}, it.lastD != null ? it.lastD + ' dage' : '')));
+      a.append(el('span', { class: 'ol-num' }, el('b', {}, fmtDay(it.removed)), el('small', {}, 'sidst set ' + fmtDay(it.lastSeen))));
+      box.append(a);
+    });
+    box.append(el('p', { class: 'chart-note' }, 'Boliger der er forsvundet fra boligsiden (solgt eller trukket tilbage), nyeste først — med sidste udbudspris og observeret liggetid.'));
+  }
+}
+
 /* ===================== line chart (shared: DST index + trend) ===================== */
 function lineChart(mount, xLabels, series, opt = {}) {
   mount.innerHTML = '';
@@ -697,6 +739,19 @@ const DST_LANDSDEL_MUNIS = {
 function currentKrM2(areaId, type) {
   const set = new Set(DST_LANDSDEL_MUNIS[areaId] || []);
   return median(S.all.filter(r => r.t === type && set.has(r.muni)).map(r => r.m2p).filter(Boolean));
+}
+// When the kommune selection sits within a single DST landsdel, point the
+// price-development chart's "Område" at it (Hillerød → Nordsjælland, etc.).
+function autoFollowDstArea() {
+  if (!S.index) return;
+  const lds = new Set();
+  S.munis.forEach(slug => {
+    for (const [ld, arr] of Object.entries(DST_LANDSDEL_MUNIS)) if (arr.includes(slug)) lds.add(ld);
+  });
+  if (lds.size === 1) {
+    const ld = [...lds][0];
+    if (S.dstArea !== ld) { S.dstArea = ld; const sel = $('#dstArea'); if (sel) sel.value = ld; }
+  }
 }
 function renderIndexChart() {
   const mount = $('#chartIndex');
@@ -1106,6 +1161,7 @@ function loadTracker() {
   fetch('data/tracker.json').then(r => r.json()).then(t => {
     S.trackerMap = new Map(Object.entries(t.items || {}));
     renderCards(filtered());
+    renderPriceChanges(filtered());   // 'sold/removed' view depends on the tracker
   }).catch(() => {});
 }
 const MONTHS_DA = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
